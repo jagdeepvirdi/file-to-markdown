@@ -10,10 +10,13 @@ md-converter/
 ├── converter.py         # MarkItDown wrapper (conversion logic + validation)
 ├── requirements.txt     # Python dependencies
 ├── build.py             # PyInstaller packaging script
+├── tests/
+│   └── test_converter.py  # Unit tests for convert_bytes
 └── frontend/
     ├── index.html       # Single-page app shell
     ├── app.v2.js        # All UI logic: drag/drop, state, API calls, log history
-    └── style.v2.css     # Dark-theme CSS (CSS variables, three-column grid)
+    ├── style.v2.css     # Dark-theme CSS (CSS variables, three-column grid)
+    └── marked.umd.js    # marked v18 UMD build (bundled locally, no CDN)
 ```
 
 ## Running the App
@@ -24,6 +27,12 @@ pip install -r requirements.txt
 
 # Run in dev mode
 python app.py
+```
+
+## Running Unit Tests
+
+```bash
+python -m unittest tests/test_converter.py
 ```
 
 ## Building a Standalone Binary
@@ -40,12 +49,13 @@ python build.py
 - `converter.py`: Converts base64 file data via MarkItDown; writes to a temp file (MarkItDown requires a real path), converts, then deletes it
 - Conversions run in a `daemon=True` background thread so the UI stays responsive
 - Result is posted back to JS via `window.evaluate_js("window.__onConvertResult(...)")`
+- History API: `save_history_file(id, content)`, `read_history_file(id)`, `delete_history_file(id)`, `clear_history_files()` — write/read markdown outputs under `~/.md-converter/history/<id>.md`; IDs are sanitized to alphanumeric + `-_` only
 
 **Frontend (Vanilla JS)**
 - Three-column workspace: Input File | Action + Log History | Output Preview
 - JS bridge readiness gated on `pywebviewready` event with a 300ms fallback
-- Log history stored in `localStorage` as `"md_converter_logs"`, capped at 50 entries
-- Built-in markdown-to-HTML renderer (no external libraries)
+- Log history metadata is stored in `localStorage` as `"md_converter_logs"` (capped at 50 entries), while the raw converted Markdown text is saved locally on disk under `~/.md-converter/history/` to prevent `localStorage` limits (5MB) from being exceeded.
+- Markdown-to-HTML preview powered by [marked.js](https://github.com/markedjs/marked) v18 (UMD build bundled at `frontend/marked.umd.js`); custom renderer blocks `javascript:`/`data:`/`vbscript:` link schemes and renders images as text references
 
 **JS↔Python Bridge**
 - File data travels as `FileReader.readAsDataURL` (base64) — ~33% size overhead

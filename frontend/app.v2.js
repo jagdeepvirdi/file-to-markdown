@@ -148,6 +148,7 @@ fileInput.addEventListener("change", () => {
 );
 
 dropZone.addEventListener("drop", (e) => {
+  if (isConverting) return;
   const files = e.dataTransfer && e.dataTransfer.files;
   if (files && files[0]) handleFile(files[0]);
 });
@@ -315,12 +316,31 @@ function onConversionError(msg) {
 /* ---------------------------------------------------------------
    Log History Management
 --------------------------------------------------------------- */
-function addLog(logItem) {
+async function addLog(logItem) {
+  if (logItem.success && logItem.markdown) {
+    try {
+      if (window.pywebview && window.pywebview.api) {
+        await window.pywebview.api.save_history_file(logItem.id, logItem.markdown);
+      }
+    } catch (e) {
+      console.error("Failed to save log to disk cache", e);
+    }
+  }
+
   logs.unshift(logItem);
   
   // Cap history at 50 entries to avoid localStorage overflow
   if (logs.length > 50) {
-    logs.pop();
+    const popped = logs.pop();
+    if (popped && popped.success) {
+      try {
+        if (window.pywebview && window.pywebview.api) {
+          await window.pywebview.api.delete_history_file(popped.id);
+        }
+      } catch (e) {
+        console.error("Failed to delete old log from disk", e);
+      }
+    }
   }
   
   saveLogs();
@@ -329,10 +349,28 @@ function addLog(logItem) {
 
 function saveLogs() {
   try {
-    localStorage.setItem("md_converter_logs", JSON.stringify(logs));
+    // Strip markdown content when writing to localStorage to prevent 5MB limit overflow
+    const strippedLogs = logs.map(item => {
+      const copy = { ...item };
+      if (copy.success) {
+        delete copy.markdown;
+      }
+      return copy;
+    });
+    localStorage.setItem("md_converter_logs", JSON.stringify(strippedLogs));
   } catch (e) {
     /* localStorage full - remove oldest entries and retry */
     if (logs.length > 5) {
+      const popped = logs.slice(logs.length - 5);
+      popped.forEach(item => {
+        if (item.success) {
+          try {
+            if (window.pywebview && window.pywebview.api) {
+              window.pywebview.api.delete_history_file(item.id);
+            }
+          } catch (e) {}
+        }
+      });
       logs = logs.slice(0, logs.length - 5);
       saveLogs();
     }
@@ -374,7 +412,7 @@ function renderLogs() {
   });
 }
 
-function loadLogItem(item) {
+async function loadLogItem(item) {
   activeLogId = item.id;
   
   // Highlight active item
@@ -382,11 +420,34 @@ function loadLogItem(item) {
     el.classList.toggle("active", el.dataset.id === item.id);
   });
   
-  renderResult(item.filename, item.markdown, item.title);
+  if (item.success) {
+    if (!item.markdown) {
+      try {
+        if (window.pywebview && window.pywebview.api) {
+          const res = await window.pywebview.api.read_history_file(item.id);
+          if (res && res.success) {
+            item.markdown = res.content;
+          } else {
+            showToast("Couldn't read log history from disk.");
+            return;
+          }
+        }
+      } catch (e) {
+        showToast("Error loading log history.");
+        return;
+      }
+    }
+    renderResult(item.filename, item.markdown, item.title);
+  }
 }
 
-clearLogsBtn.addEventListener("click", () => {
+clearLogsBtn.addEventListener("click", async () => {
   logs = [];
+  try {
+    if (window.pywebview && window.pywebview.api) {
+      await window.pywebview.api.clear_history_files();
+    }
+  } catch (e) {}
   saveLogs();
   renderLogs();
   clearPreview();
@@ -405,7 +466,7 @@ function renderResult(filename, markdown, title) {
   const words = markdown.trim().split(/\s+/).filter(Boolean).length;
   resultMeta.textContent = `${markdown.length.toLocaleString()} chars · ~${words.toLocaleString()} words`;
 
-  previewView.innerHTML = renderMarkdownPreview(markdown);
+  previewView.innerHTML = marked.parse(markdown);
   
   // Enable toolbar actions
   clearBtn.disabled = false;
@@ -491,7 +552,7 @@ downloadBtn.addEventListener("click", async () => {
 });
 
 /* ---------------------------------------------------------------
-   Markdown -> HTML preview renderer
+   Markdown -> HTML preview renderer (marked.js v18, bundled locally)
 --------------------------------------------------------------- */
 function escapeHtml(str) {
   return str
@@ -501,141 +562,19 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-function renderInline(text) {
-  let t = escapeHtml(text);
-  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
-  t = t.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt) =>
-    alt ? `<span class="img-ref">[image: ${alt}]</span>` : ""
-  );
-  t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  t = t.replace(/__([^_]+)__/g, "<strong>$1</strong>");
-  t = t.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  t = t.replace(/(?<!_)_([^_]+)_(?!_)/g, "<em>$1</em>");
-  return t;
-}
-
-function renderMarkdownPreview(md) {
-  const lines = md.replace(/\r\n/g, "\n").split("\n");
-  let html = "";
-  let i = 0;
-  let inCodeBlock = false;
-  let codeBuffer  = [];
-  let listStack   = [];
-  let tableBuffer = [];
-
-  function closeLists() {
-    while (listStack.length) html += `</${listStack.pop()}>`;
-  }
-
-  function flushTable() {
-    if (!tableBuffer.length) return;
-    const rows = tableBuffer.filter((r) => !/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(r));
-    if (!rows.length) { tableBuffer = []; return; }
-    const parseRow = (r) => r.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
-    const header = parseRow(rows[0]);
-    const body   = rows.slice(1).map(parseRow);
-    html += "<table><thead><tr>";
-    header.forEach((c) => (html += `<th>${renderInline(c)}</th>`));
-    html += "</tr></thead><tbody>";
-    body.forEach((r) => {
-      html += "<tr>";
-      r.forEach((c) => (html += `<td>${renderInline(c)}</td>`));
-      html += "</tr>";
-    });
-    html += "</tbody></table>";
-    tableBuffer = [];
-  }
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    if (/^```/.test(line)) {
-      if (!inCodeBlock) {
-        closeLists();
-        inCodeBlock = true;
-        codeBuffer  = [];
-      } else {
-        html += `<pre><code>${escapeHtml(codeBuffer.join("\n"))}</code></pre>`;
-        inCodeBlock = false;
+marked.use({
+  renderer: {
+    link({ href, title, tokens }) {
+      const text = this.parser.parseInline(tokens);
+      const cleanHref = (href || "").replace(/[\s\x00-\x1F\x7F-\x9F\u200B-\u200D\uFEFF]/g, "");
+      if (/^(javascript|data|vbscript):/i.test(cleanHref)) {
+        return `<span>${text}</span>`;
       }
-      i++;
-      continue;
-    }
-    if (inCodeBlock) { codeBuffer.push(line); i++; continue; }
-
-    if (/^\s*\|.*\|\s*$/.test(line) && lines[i + 1] && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
-      closeLists();
-      tableBuffer = [line, lines[i + 1]];
-      i += 2;
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
-        tableBuffer.push(lines[i]);
-        i++;
-      }
-      flushTable();
-      continue;
-    }
-
-    const h = line.match(/^(#{1,6})\s+(.*)$/);
-    if (h) {
-      closeLists();
-      html += `<h${h[1].length}>${renderInline(h[2])}</h${h[1].length}>`;
-      i++;
-      continue;
-    }
-
-    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      closeLists();
-      html += "<hr>";
-      i++;
-      continue;
-    }
-
-    if (/^\s*>\s?/.test(line)) {
-      closeLists();
-      const buf = [];
-      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
-        buf.push(lines[i].replace(/^\s*>\s?/, ""));
-        i++;
-      }
-      html += `<blockquote>${renderInline(buf.join(" "))}</blockquote>`;
-      continue;
-    }
-
-    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
-    if (ul) {
-      if (listStack[listStack.length - 1] !== "ul") { closeLists(); listStack.push("ul"); html += "<ul>"; }
-      html += `<li>${renderInline(ul[1])}</li>`;
-      i++;
-      continue;
-    }
-
-    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
-    if (ol) {
-      if (listStack[listStack.length - 1] !== "ol") { closeLists(); listStack.push("ol"); html += "<ol>"; }
-      html += `<li>${renderInline(ol[1])}</li>`;
-      i++;
-      continue;
-    }
-
-    if (/^\s*$/.test(line)) { closeLists(); i++; continue; }
-
-    closeLists();
-    const buf = [line];
-    i++;
-    while (
-      i < lines.length &&
-      !/^\s*$/.test(lines[i]) &&
-      !/^#{1,6}\s/.test(lines[i]) &&
-      !/^```/.test(lines[i])
-    ) {
-      buf.push(lines[i]);
-      i++;
-    }
-    html += `<p>${renderInline(buf.join(" "))}</p>`;
-  }
-
-  closeLists();
-  flushTable();
-  return html;
-}
+      const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+      return `<a href="${cleanHref}"${titleAttr} target="_blank" rel="noopener">${text}</a>`;
+    },
+    image({ text }) {
+      return text ? `<span class="img-ref">[image: ${escapeHtml(text)}]</span>` : "";
+    },
+  },
+});

@@ -24,6 +24,8 @@ from converter import convert_bytes, SUPPORTED_EXTENSIONS, MAX_FILE_SIZE_BYTES
 # in packaged builds where there is no visible console.
 _log_dir = os.path.join(os.path.expanduser("~"), ".md-converter")
 os.makedirs(_log_dir, exist_ok=True)
+_history_dir = os.path.join(_log_dir, "history")
+os.makedirs(_history_dir, exist_ok=True)
 logging.basicConfig(
     filename=os.path.join(_log_dir, "error.log"),
     level=logging.ERROR,
@@ -101,6 +103,55 @@ class Api:
         except Exception as e:
             log.error("save_file failed", exc_info=True)
             return {"success": False, "error": str(e)}
+
+    def save_history_file(self, file_id: str, content: str) -> dict:
+        try:
+            safe_id = "".join(c for c in file_id if c.isalnum() or c in ("-", "_"))
+            if not safe_id:
+                return {"success": False, "error": "Invalid ID"}
+            path = os.path.join(_history_dir, f"{safe_id}.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return {"success": True}
+        except Exception as e:
+            log.error(f"save_history_file failed for {file_id}", exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    def read_history_file(self, file_id: str) -> dict:
+        try:
+            safe_id = "".join(c for c in file_id if c.isalnum() or c in ("-", "_"))
+            path = os.path.join(_history_dir, f"{safe_id}.md")
+            if not os.path.exists(path):
+                return {"success": False, "error": "History file not found"}
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            return {"success": True, "content": content}
+        except Exception as e:
+            log.error(f"read_history_file failed for {file_id}", exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    def delete_history_file(self, file_id: str) -> dict:
+        try:
+            safe_id = "".join(c for c in file_id if c.isalnum() or c in ("-", "_"))
+            path = os.path.join(_history_dir, f"{safe_id}.md")
+            if os.path.exists(path):
+                os.remove(path)
+            return {"success": True}
+        except Exception as e:
+            log.error(f"delete_history_file failed for {file_id}", exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    def clear_history_files(self) -> dict:
+        try:
+            for name in os.listdir(_history_dir):
+                path = os.path.join(_history_dir, name)
+                if os.path.isfile(path):
+                    os.remove(path)
+            return {"success": True}
+        except Exception as e:
+            log.error("clear_history_files failed", exc_info=True)
+            return {"success": False, "error": str(e)}
+
 
 
 def main():

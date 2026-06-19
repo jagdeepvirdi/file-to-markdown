@@ -61,12 +61,7 @@ MAX_FILE_SIZE_BYTES = 80 * 1024 * 1024  # 80 MB
 # A single shared instance is fine: MarkItDown is stateless per-call
 # and we never register an llm_client, so nothing here ever leaves
 # the machine.
-_engine = MarkItDown(enable_plugins=False)
-
-
-def is_supported(filename: str) -> bool:
-    ext = os.path.splitext(filename)[1].lower()
-    return ext in SUPPORTED_EXTENSIONS
+_engine = MarkItDown()
 
 
 def convert_bytes(filename: str, data: bytes) -> dict:

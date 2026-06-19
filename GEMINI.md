@@ -48,7 +48,7 @@ graph TD
 *   **API Bridge:** The `Api` class in `app.py` is exposed to JavaScript as `window.pywebview.api`.
 *   **Introspector Safety:** The webview reference on the API class is stored as `self._window` (prefixed with `_`). This prevents the `pywebview` introspector from recursively analyzing the window object and causing WebView2 to hang.
 *   **Background Threads:** Conversions are run inside a python `threading.Thread(daemon=True)`. This keeps the API bridge thread free so the frontend remains completely responsive (with loading animations) during CPU-heavy conversions.
-*   **MarkItDown Configurations:** Uses `MarkItDown(enable_plugins=False)` to prevent third-party plugins from altering output. Audio transcription is omitted because it defaults to Google's online speech API.
+*   **MarkItDown Configurations:** Uses `MarkItDown()` as the engine. Audio transcription is omitted because it defaults to Google's online speech API.
 
 ---
 
@@ -75,19 +75,10 @@ Instead of a multi-stage wizard, the UI uses a desktop-grade side-by-side worksp
 
 ## 💾 State & Log Persistence
 
-*   **Logs Array:** Log history items are stored in a JavaScript array `logs` containing:
-    ```json
-    {
-      "id": "1687199120000",
-      "filename": "doc.docx",
-      "success": true,
-      "markdown": "# Header\n...",
-      "title": "Document Title",
-      "timestamp": "03:45 PM"
-    }
-    ```
-*   **LocalStorage Sync:** The history list is saved to the browser's local database as `"md_converter_logs"`. It is loaded automatically on startup, preserving your past conversion results across sessions.
-*   **Cap Limits:** To prevent storage limits (5MB) from being exceeded, history is capped at `50` items, and write operations use try-catch checks that auto-trim older records.
+*   **Logs Array:** Log history items are stored in a JavaScript array `logs` containing metadata. The `markdown` text is omitted from the saved JSON string in `localStorage` and instead saved to local disk cache files.
+*   **Disk Cache Integration:** Successful markdown outputs are written locally to the user's home directory (`~/.md-converter/history/<id>.md`) using Python's API. Clicking a history item calls `window.pywebview.api.read_history_file(id)` to load its content.
+*   **LocalStorage Sync:** The history metadata list (filename, timestamp, success/error state, and file ID) is saved to the browser's database as `"md_converter_logs"`. It is loaded automatically on startup, preserving past entries across sessions.
+*   **Cap Limits:** To prevent storage limits (5MB) from being exceeded, history is capped at `50` items. Old items are deleted from both the `localStorage` metadata list and the local disk cache directory automatically.
 
 ---
 
