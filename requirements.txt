@@ -1,0 +1,24 @@
+# Runtime dependencies for File -> Markdown
+#
+# markitdown extras included:
+#   pdf      -> PDF text extraction
+#   docx     -> Word documents
+#   pptx     -> PowerPoint
+#   xlsx     -> modern Excel
+#   xls      -> legacy Excel
+#   outlook  -> .msg files
+# (CSV / JSON / TXT / MD / HTML / EPUB / IPYNB / ZIP / images need no extra)
+#
+# Deliberately NOT included: audio-transcription (calls Google's web speech
+# API by default -> not offline) and az-doc-intel (cloud only).
+markitdown[pdf,docx,pptx,xlsx,xls,outlook]>=0.1.5
+
+# Desktop window (wraps the OS's native web renderer: WebView2 on
+# Windows, WKWebView on macOS, GTK+WebKit on Linux)
+pywebview>=5.0
+
+# Cross-platform clipboard access used by the "Copy" button
+pyperclip>=1.9
+
+# Only needed if you run build.py to produce a standalone .exe/.app
+pyinstaller>=6.0

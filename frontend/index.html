@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>File → Markdown</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="app">
+
+    <header class="topbar">
+      <div class="eyebrow">LOCAL&nbsp;&middot;&nbsp;OFFLINE&nbsp;&middot;&nbsp;NO&nbsp;AI</div>
+      <h1>File <span class="arrow">&rarr;</span> Markdown</h1>
+    </header>
+
+    <main>
+
+      <!-- STATE 1: drop zone -->
+      <section id="dropStage" class="stage">
+        <div id="dropZone" class="dropzone" tabindex="0" role="button" aria-label="Choose or drop a file to convert">
+          <svg class="dz-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <path d="M14 2v6h6"/>
+          </svg>
+          <p class="dz-title">Drop a file here</p>
+          <p class="dz-sub">or click to browse</p>
+        </div>
+        <input id="fileInput" type="file" hidden />
+
+        <button id="extToggle" class="link-btn" type="button" aria-expanded="false">
+          Show supported file types
+        </button>
+        <div id="extList" class="ext-list" hidden></div>
+      </section>
+
+      <!-- STATE 2: file selected, ready to convert -->
+      <section id="readyStage" class="stage" hidden>
+        <div id="readyError" class="error-box ready-error" hidden>
+          <p class="error-title">Couldn't convert that file</p>
+          <p id="readyErrorMessage" class="error-message"></p>
+        </div>
+        <div class="ready-card">
+          <div class="ready-caption">
+            <span class="fmt-badge fmt-src" id="readyFilename"></span>
+            <span class="ready-arrow">&rarr;</span>
+            <span class="fmt-badge fmt-dst">.md</span>
+          </div>
+          <button id="convertBtn" class="btn btn-primary" type="button">Convert</button>
+          <button id="readyCancelBtn" class="link-btn" type="button">&larr; Choose a different file</button>
+        </div>
+      </section>
+
+      <!-- STATE 3: converting -->
+      <section id="loadingStage" class="stage" hidden>
+      </section>
+
+      <!-- STATE 4: error -->
+      <section id="errorStage" class="stage" hidden>
+        <div class="error-box">
+          <p class="error-title">Couldn't convert that file</p>
+          <p id="errorMessage" class="error-message"></p>
+        </div>
+      </section>
+
+      <!-- STATE 5: result -->
+      <section id="resultStage" class="stage stage-result" hidden>
+        <div class="toolbar">
+          <div class="filemeta">
+            <span class="file-pill" id="resultFilename"></span>
+            <span class="char-count" id="resultMeta"></span>
+          </div>
+          <div class="toolbar-actions">
+            <div class="viewtabs" role="tablist">
+              <button class="viewtab active" data-view="raw" type="button">Raw</button>
+              <button class="viewtab" data-view="preview" type="button">Preview</button>
+            </div>
+            <button id="copyBtn" class="btn btn-ghost" type="button">Copy</button>
+            <button id="clearBtn" class="btn btn-ghost" type="button">Clear</button>
+            <button id="downloadBtn" class="btn btn-primary" type="button">Download .md</button>
+          </div>
+        </div>
+
+        <pre id="rawView" class="output raw-view"><code id="rawCode"></code></pre>
+        <div id="previewView" class="output preview-view" hidden></div>
+
+        <button id="newFileBtn" class="link-btn newfile-btn" type="button">&larr; Convert another file</button>
+      </section>
+
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
