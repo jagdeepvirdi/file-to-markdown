@@ -1,9 +1,37 @@
+# Virtual environments
 venv/
+.venv/
+env/
+.env/
+
+# Python bytecode
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
+
+# Distribution / packaging
 dist/
 build/
 *.spec
 *.egg-info/
+
+# PyInstaller
+*.manifest
+
+# Tools
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# App runtime data
+*.log
+tmp_npm/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
