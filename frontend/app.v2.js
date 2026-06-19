@@ -3,37 +3,34 @@
 /* ---------------------------------------------------------------
    Elements
 --------------------------------------------------------------- */
-const dropStage    = document.getElementById("dropStage");
-const readyStage   = document.getElementById("readyStage");
-const loadingStage = document.getElementById("loadingStage");
-const errorStage   = document.getElementById("errorStage");
-const resultStage  = document.getElementById("resultStage");
-
 const dropZone  = document.getElementById("dropZone");
 const fileInput = document.getElementById("fileInput");
 const extToggle = document.getElementById("extToggle");
 const extList   = document.getElementById("extList");
 
-const readyError        = document.getElementById("readyError");
-const readyErrorMessage = document.getElementById("readyErrorMessage");
-const readyFilename     = document.getElementById("readyFilename");
+const selectedCard  = document.getElementById("selectedCard");
+const readyFilename = document.getElementById("readyFilename");
+
 const convertBtn        = document.getElementById("convertBtn");
-const readyCancelBtn    = document.getElementById("readyCancelBtn");
+const convertBtnText    = document.getElementById("convertBtnText");
+const convertSpinner    = document.getElementById("convertSpinner");
 
-const errorMessage = document.getElementById("errorMessage");
+const logList           = document.getElementById("logList");
+const clearLogsBtn      = document.getElementById("clearLogsBtn");
 
-const resultFilename = document.getElementById("resultFilename");
-const resultMeta     = document.getElementById("resultMeta");
-const rawCode        = document.getElementById("rawCode");
-const rawView        = document.getElementById("rawView");
-const previewView    = document.getElementById("previewView");
-const copyBtn        = document.getElementById("copyBtn");
+const resultContainer    = document.getElementById("resultContainer");
+const resultFilename     = document.getElementById("resultFilename");
+const resultMeta         = document.getElementById("resultMeta");
+const previewView        = document.getElementById("previewView");
+
 const clearBtn       = document.getElementById("clearBtn");
+const copyBtn        = document.getElementById("copyBtn");
 const downloadBtn    = document.getElementById("downloadBtn");
-const newFileBtn     = document.getElementById("newFileBtn");
-const viewTabs       = document.querySelectorAll(".viewtab");
 const toast          = document.getElementById("toast");
 
+/* ---------------------------------------------------------------
+   State Variables
+--------------------------------------------------------------- */
 let currentMarkdown  = "";
 let currentBaseName  = "output";
 let pendingFilename  = "";
@@ -41,21 +38,31 @@ let pendingFile      = null;   // File object held between selection and Convert
 let apiReady         = false;
 let supportedExtensions = new Set();
 let maxFileSizeBytes    = 80 * 1024 * 1024;
+let isConverting        = false;
 
-// Always start clean on the drop zone regardless of WebView2 session state.
-showStage(dropStage);
-readyError.hidden = true;
-readyErrorMessage.textContent = "";
+// Log history array
+let logs = [];
 
-/* ---------------------------------------------------------------
-   State machine
---------------------------------------------------------------- */
-function showStage(stage) {
-  [dropStage, readyStage, loadingStage, errorStage, resultStage].forEach((s) => {
-    s.hidden = s !== stage;
-  });
+// Initialize
+try {
+  const savedLogs = localStorage.getItem("md_converter_logs");
+  if (savedLogs) {
+    logs = JSON.parse(savedLogs);
+  }
+} catch (e) {
+  logs = [];
 }
 
+// Active log item ID being viewed
+let activeLogId = null;
+
+// Render logs and clear preview state on load
+renderLogs();
+clearPreview();
+
+/* ---------------------------------------------------------------
+   Toast Notifications
+--------------------------------------------------------------- */
 function showToast(msg, ms = 2200) {
   toast.textContent = msg;
   toast.hidden = false;
@@ -145,11 +152,11 @@ dropZone.addEventListener("drop", (e) => {
   if (files && files[0]) handleFile(files[0]);
 });
 
-// Global drag/drop: prevent navigation, allow dropping on any stage except loading.
+// Global drag/drop: prevent navigation, allow dropping anytime if not converting.
 document.addEventListener("dragover", (e) => e.preventDefault());
 document.addEventListener("drop", (e) => {
   e.preventDefault();
-  if (!loadingStage.hidden) return;
+  if (isConverting) return;
   const files = e.dataTransfer && e.dataTransfer.files;
   if (files && files[0]) handleFile(files[0]);
 });
@@ -158,19 +165,22 @@ document.addEventListener("drop", (e) => {
    Keyboard shortcuts
 --------------------------------------------------------------- */
 document.addEventListener("keydown", (e) => {
-  // Escape: return to drop zone from ready, error, or result
-  if (e.key === "Escape" &&
-      (!readyStage.hidden || !errorStage.hidden || !resultStage.hidden)) {
-    resetToDropZone();
+  // Escape: clear selection or clear active preview
+  if (e.key === "Escape") {
+    if (pendingFile) {
+      clearSelection();
+    } else if (currentMarkdown) {
+      clearPreview();
+    }
     return;
   }
-  // Ctrl/Cmd+Enter: trigger Convert when on the ready stage
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !readyStage.hidden) {
+  // Ctrl/Cmd+Enter: trigger Convert when a file is selected
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && pendingFile && !isConverting) {
     convertBtn.click();
     return;
   }
-  // Ctrl/Cmd+C: copy markdown when on result stage with no text selected
-  if ((e.ctrlKey || e.metaKey) && e.key === "c" && !resultStage.hidden) {
+  // Ctrl/Cmd+C: copy markdown when a preview is active and no text selection is active
+  if ((e.ctrlKey || e.metaKey) && e.key === "c" && currentMarkdown) {
     if (!window.getSelection().toString()) {
       e.preventDefault();
       copyBtn.click();
@@ -179,7 +189,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 /* ---------------------------------------------------------------
-   File handling — two-step: select → ready stage → convert
+   File handling
 --------------------------------------------------------------- */
 function handleFile(file) {
   if (!apiReady) {
@@ -187,85 +197,200 @@ function handleFile(file) {
     return;
   }
 
-  // Instant client-side validation before touching the bridge
+  // Client-side validation before touching the bridge
   const dotIdx = file.name.lastIndexOf(".");
   const ext = dotIdx !== -1 ? file.name.slice(dotIdx).toLowerCase() : "";
   if (supportedExtensions.size > 0 && !supportedExtensions.has(ext)) {
-    renderError(`Unsupported file type '${ext || "unknown"}'.\n\nDrop a supported file to convert.`);
+    showToast(`Unsupported file type '${ext || "unknown"}'.\n\nDrop a supported file to convert.`, 4000);
     return;
   }
   if (file.size > maxFileSizeBytes) {
     const limitMb = (maxFileSizeBytes / (1024 * 1024)).toFixed(0);
     const fileMb  = (file.size  / (1024 * 1024)).toFixed(1);
-    renderError(`File is too large (${fileMb} MB). Limit is ${limitMb} MB.`);
+    showToast(`File is too large (${fileMb} MB). Limit is ${limitMb} MB.`, 4000);
     return;
   }
 
-  // File looks good — show the ready stage for user confirmation
+  // File is valid
   pendingFile = file;
   readyFilename.textContent = file.name;
-  readyError.hidden = true;
-  readyErrorMessage.textContent = "";
-  showStage(readyStage);
+  
+  // Show selected file card, hide dropzone
+  dropZone.hidden = true;
+  selectedCard.hidden = false;
+  
+  // Enable convert button
+  convertBtn.disabled = false;
 }
 
+
+
+function clearSelection() {
+  fileInput.value = "";
+  pendingFile = null;
+  readyFilename.textContent = "";
+  
+  dropZone.hidden = false;
+  selectedCard.hidden = true;
+  
+  convertBtn.disabled = true;
+}
+
+/* ---------------------------------------------------------------
+   Conversion Flow
+--------------------------------------------------------------- */
 convertBtn.addEventListener("click", () => {
   if (pendingFile) startConversion(pendingFile);
 });
 
 function startConversion(file) {
+  isConverting = true;
   pendingFilename = file.name;
-  showStage(loadingStage);
+  
+  // Update button loading state
+  convertBtn.disabled = true;
+  convertBtnText.textContent = "Converting...";
+  convertSpinner.hidden = false;
 
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      // Fire-and-forget: result arrives via window.__onConvertResult
       window.pywebview.api.convert_file(file.name, reader.result);
     } catch (e) {
-      renderError(String((e && e.message) || e));
+      onConversionError(String((e && e.message) || e));
     }
   };
-  reader.onerror = () => renderError("Could not read the file from disk.");
+  reader.onerror = () => onConversionError("Could not read the file from disk.");
   reader.readAsDataURL(file);
 }
 
 // Python posts the conversion result here via window.evaluate_js().
 window.__onConvertResult = function (result) {
+  isConverting = false;
+  convertBtnText.textContent = "Convert";
+  convertSpinner.hidden = true;
+  
+  if (pendingFile) {
+    convertBtn.disabled = false;
+  }
+
   if (result && result.success) {
-    renderResult(pendingFilename, result.markdown, result.title);
+    const logItem = {
+      id: Date.now().toString(),
+      filename: pendingFilename,
+      success: true,
+      markdown: result.markdown,
+      title: result.title || pendingFilename,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+    addLog(logItem);
+    loadLogItem(logItem);
+    clearSelection();
   } else {
-    // Show error above the file caption on the ready stage so the user can retry
-    readyErrorMessage.textContent = (result && result.error) || "Unknown error during conversion.";
-    readyError.hidden = false;
-    showStage(readyStage);
+    const errMsg = (result && result.error) || "Unknown error during conversion.";
+    onConversionError(errMsg);
   }
 };
 
-function renderError(message) {
-  errorMessage.textContent = message;
-  showStage(errorStage);
+function onConversionError(msg) {
+  isConverting = false;
+  convertBtnText.textContent = "Convert";
+  convertSpinner.hidden = true;
+  if (pendingFile) {
+    convertBtn.disabled = false;
+  }
+  
+  showToast(msg, 5000);
+  
+  const logItem = {
+    id: Date.now().toString(),
+    filename: pendingFilename,
+    success: false,
+    error: msg,
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  };
+  addLog(logItem);
 }
 
-readyCancelBtn.addEventListener("click", resetToDropZone);
-newFileBtn.addEventListener("click", resetToDropZone);
-clearBtn.addEventListener("click", resetToDropZone);
-
-function resetToDropZone() {
-  fileInput.value       = "";
-  currentMarkdown       = "";
-  pendingFile           = null;
-  rawCode.textContent   = "";
-  previewView.innerHTML = "";
-  errorMessage.textContent = "";
-  readyError.hidden = true;
-  readyErrorMessage.textContent = "";
-  readyFilename.textContent = "";
-  extToggle.setAttribute("aria-expanded", "false");
-  extToggle.textContent = "Show supported file types";
-  extList.hidden = true;
-  showStage(dropStage);
+/* ---------------------------------------------------------------
+   Log History Management
+--------------------------------------------------------------- */
+function addLog(logItem) {
+  logs.unshift(logItem);
+  
+  // Cap history at 50 entries to avoid localStorage overflow
+  if (logs.length > 50) {
+    logs.pop();
+  }
+  
+  saveLogs();
+  renderLogs();
 }
+
+function saveLogs() {
+  try {
+    localStorage.setItem("md_converter_logs", JSON.stringify(logs));
+  } catch (e) {
+    /* localStorage full - remove oldest entries and retry */
+    if (logs.length > 5) {
+      logs = logs.slice(0, logs.length - 5);
+      saveLogs();
+    }
+  }
+}
+
+function renderLogs() {
+  logList.innerHTML = "";
+  if (logs.length === 0) {
+    logList.innerHTML = `<div class="log-empty">No files converted yet.</div>`;
+    return;
+  }
+
+  logs.forEach((item) => {
+    const div = document.createElement("div");
+    div.className = `log-item ${item.id === activeLogId ? "active" : ""}`;
+    div.dataset.id = item.id;
+    
+    const icon = item.success ? "✓" : "✗";
+    const iconClass = item.success ? "success" : "error";
+    
+    div.innerHTML = `
+      <div class="log-item-info">
+        <span class="log-item-icon ${iconClass}">${icon}</span>
+        <span class="log-item-name" title="${item.filename}">${item.filename}</span>
+      </div>
+      <span class="log-item-time">${item.timestamp}</span>
+    `;
+    
+    div.addEventListener("click", () => {
+      if (item.success) {
+        loadLogItem(item);
+      } else {
+        showToast(`Failed: ${item.error}`, 4000);
+      }
+    });
+    
+    logList.appendChild(div);
+  });
+}
+
+function loadLogItem(item) {
+  activeLogId = item.id;
+  
+  // Highlight active item
+  document.querySelectorAll(".log-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.id === item.id);
+  });
+  
+  renderResult(item.filename, item.markdown, item.title);
+}
+
+clearLogsBtn.addEventListener("click", () => {
+  logs = [];
+  saveLogs();
+  renderLogs();
+  clearPreview();
+});
 
 /* ---------------------------------------------------------------
    Result rendering
@@ -280,26 +405,37 @@ function renderResult(filename, markdown, title) {
   const words = markdown.trim().split(/\s+/).filter(Boolean).length;
   resultMeta.textContent = `${markdown.length.toLocaleString()} chars · ~${words.toLocaleString()} words`;
 
-  rawCode.textContent   = markdown;
   previewView.innerHTML = renderMarkdownPreview(markdown);
-
-  setView("raw");
-  showStage(resultStage);
+  
+  // Enable toolbar actions
+  clearBtn.disabled = false;
+  copyBtn.disabled = false;
+  downloadBtn.disabled = false;
 }
 
-function setView(view) {
-  viewTabs.forEach((t) => t.classList.toggle("active", t.dataset.view === view));
-  rawView.hidden     = view !== "raw";
-  previewView.hidden = view !== "preview";
+function clearPreview() {
+  currentMarkdown = "";
+  activeLogId = null;
+  
+  previewView.innerHTML = "";
+  resultFilename.textContent = "";
+  resultMeta.textContent = "";
+  
+  document.querySelectorAll(".log-item").forEach((el) => {
+    el.classList.remove("active");
+  });
+  
+  // Disable toolbar actions
+  clearBtn.disabled = true;
+  copyBtn.disabled = true;
+  downloadBtn.disabled = true;
 }
-
-viewTabs.forEach((tab) =>
-  tab.addEventListener("click", () => setView(tab.dataset.view))
-);
 
 /* ---------------------------------------------------------------
-   Copy / Download
+   Toolbar Actions (Clear / Copy / Download)
 --------------------------------------------------------------- */
+clearBtn.addEventListener("click", clearPreview);
+
 copyBtn.addEventListener("click", async () => {
   if (!currentMarkdown) return;
   try {
@@ -335,9 +471,8 @@ downloadBtn.addEventListener("click", async () => {
       const res = await window.pywebview.api.save_file(currentMarkdown, suggested);
       if (res && res.success) {
         showToast(`Saved to ${res.path}`);
-        resetToDropZone();
       } else if (res && res.cancelled) {
-        /* user cancelled the save dialog — stay on result */
+        /* user cancelled save dialog */
       } else {
         showToast((res && res.error) || "Couldn't save file");
       }
