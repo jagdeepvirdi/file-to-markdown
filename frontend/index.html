@@ -37,11 +37,11 @@
 
       <!-- STATE 2: file selected, ready to convert -->
       <section id="readyStage" class="stage" hidden>
-        <div id="readyError" class="error-box ready-error" hidden>
-          <p class="error-title">Couldn't convert that file</p>
-          <p id="readyErrorMessage" class="error-message"></p>
-        </div>
-        <div class="ready-card">
+        <div class="ready-wrap">
+          <div id="readyError" class="error-box" hidden>
+            <p class="error-title">Couldn't convert that file</p>
+            <p id="readyErrorMessage" class="error-message"></p>
+          </div>
           <div class="ready-caption">
             <span class="fmt-badge fmt-src" id="readyFilename"></span>
             <span class="ready-arrow">&rarr;</span>

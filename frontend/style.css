@@ -176,11 +176,17 @@ main {
 
 /* ---------- ready stage ---------- */
 
-.ready-card {
+/* Single wrapper — stage centers this one element, wrapper stacks its own children */
+.ready-wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 28px;
+  gap: 24px;
+}
+
+/* Cancel link sits inside a flex gap; kill the global .link-btn margin-top here */
+.ready-wrap .link-btn {
+  margin-top: 0;
 }
 
 .ready-caption {
@@ -208,10 +214,6 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.ready-error {
-  margin-bottom: 8px;
 }
 
 .fmt-dst {
