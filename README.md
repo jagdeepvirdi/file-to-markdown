@@ -22,21 +22,21 @@ No AI, no uploads, no internet required.
 
 ## Supported file types
 
-| Format | Extensions |
-|--------|-----------|
-| PDF | `.pdf` |
-| Word | `.docx` |
-| PowerPoint | `.pptx` |
-| Excel | `.xlsx`, `.xls` |
-| Data | `.csv`, `.json`, `.jsonl` |
-| Text / Markup | `.txt`, `.text`, `.md`, `.markdown`, `.html`, `.htm` |
-| eBook | `.epub` |
-| Notebook | `.ipynb` |
-| Email | `.msg` |
-| Archive | `.zip` (converts all supported files inside) |
-| Images | `.jpg`, `.jpeg`, `.png` (EXIF metadata + any embedded/OCR text) |
-
-Audio (`.wav`/`.mp3`/`.m4a`) is **not** included by default — MarkItDown's audio converter calls Google's Web Speech API, which breaks the offline guarantee. See [Optional: audio support](#optional-audio-support).
+| Format | Extensions | Notes |
+|--------|-----------|-------|
+| PDF | `.pdf` | |
+| Word | `.docx` | |
+| PowerPoint | `.pptx` | |
+| Excel | `.xlsx`, `.xls` | |
+| Data | `.csv`, `.json`, `.jsonl` | |
+| Text / Markup | `.txt`, `.text`, `.md`, `.markdown`, `.html`, `.htm` | |
+| eBook | `.epub` | |
+| Notebook | `.ipynb` | |
+| Email | `.msg` | |
+| Archive | `.zip` | Converts all supported files inside |
+| Images | `.jpg`, `.jpeg`, `.png` | Offline OCR via Tesseract — requires Tesseract in PATH |
+| Audio | `.mp3`, `.wav` | Offline transcription via FFmpeg + PocketSphinx — requires FFmpeg in PATH |
+| Video | `.mp4`, `.mkv` | Offline transcription via FFmpeg + PocketSphinx — requires FFmpeg in PATH |
 
 ## How it works
 
@@ -45,7 +45,15 @@ file (drag/drop or file picker)
     │  browser reads bytes, base64-encodes them
     ▼
 window.pywebview.api.convert_file(name, data)   ← network-free Python bridge
-    │  Python writes temp file → MarkItDown converts → temp file deleted
+    │  Python writes temp file, then routes by extension:
+    │
+    ├─ images (.jpg/.jpeg/.png)
+    │      └─ media_handlers.process_image() → Tesseract OCR
+    │
+    ├─ audio/video (.mp3/.wav/.mp4/.mkv)
+    │      └─ media_handlers.process_audio_video() → FFmpeg → PocketSphinx
+    │
+    └─ everything else → MarkItDown(enable_plugins=False) → temp file deleted
     ▼
 markdown text returned to the frontend
     │
@@ -60,7 +68,9 @@ Everything runs in a single process on your machine. The "desktop app" is [pyweb
 
 - **Three-column workspace** — file picker, conversion controls + log history, and live Markdown preview side by side
 - **Persistent log history** — past conversions survive app restarts; click any entry to reload its output. Large markdown files are stored on disk (`~/.md-converter/history/`) rather than in localStorage to avoid the 5 MB cap
-- **Markdown preview** — rendered via [marked.js](https://github.com/markedjs/marked) v18, bundled locally (no CDN). XSS-safe: `javascript:`, `data:`, and `vbscript:` link schemes are blocked
+- **Offline image OCR** — images are processed by Tesseract locally; no cloud vision API. Requires [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) installed and in PATH
+- **Offline audio/video transcription** — media files are segmented into 60-second chunks by FFmpeg, then transcribed by PocketSphinx — entirely on-device. Requires [FFmpeg](https://ffmpeg.org/download.html) installed and in PATH. Both tools return a clear installation guide if missing
+- **Markdown preview** — rendered via [marked.js](https://github.com/markedjs/marked) v18, bundled locally (no CDN). XSS-safe: `javascript:`, `data:`, and `vbscript:` link schemes are blocked; `href` attributes are HTML-escaped; images render as `[image: alt]` text references
 - **Keyboard shortcuts**
 
   | Shortcut | Action |
@@ -70,23 +80,25 @@ Everything runs in a single process on your machine. The "desktop app" is [pyweb
   | `Ctrl+C` | Copy Markdown (when no text is selected) |
 
 - **80 MB file cap** — enforced client-side and server-side; raise `MAX_FILE_SIZE_BYTES` in `converter.py` if you need more headroom
-- **No network calls** — `enable_plugins=False` on MarkItDown, no `llm_client` attached, no telemetry
+- **No network calls** — `MarkItDown(enable_plugins=False)`, no `llm_client` attached, Tesseract and PocketSphinx run fully on-device, no telemetry
 
 ## Project layout
 
 ```
 md-converter/
-├── app.py               # pywebview entry point + Python API exposed to JS
-├── converter.py         # MarkItDown wrapper, supported-extension registry
-├── requirements.txt
-├── build.py             # PyInstaller packaging script
+├── app.py                  # pywebview entry point + Python API exposed to JS
+├── converter.py            # MarkItDown wrapper, supported-extension registry
+├── media_handlers.py       # Offline image OCR (Tesseract) and audio/video transcription (FFmpeg + PocketSphinx)
+├── requirements.txt        # Runtime dependencies
+├── requirements-build.txt  # Build-only dependency (PyInstaller)
+├── build.py                # PyInstaller packaging script
 ├── tests/
 │   └── test_converter.py
 └── frontend/
     ├── index.html
     ├── style.v2.css
-    ├── app.v2.js        # drag/drop, state, API calls, log history
-    └── marked.umd.js    # marked v18 UMD build (bundled, no CDN)
+    ├── app.v2.js           # drag/drop, state, API calls, log history
+    └── marked.umd.js       # marked v18 UMD build (bundled, no CDN)
 ```
 
 ## Run in development
@@ -109,7 +121,7 @@ python -m unittest tests/test_converter.py
 Run this **on the target OS** — PyInstaller does not cross-compile:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-build.txt
 python build.py
 ```
 
@@ -132,25 +144,32 @@ Drop an `icon.ico` (Windows) or `icon.icns` (macOS) next to `build.py` before bu
 sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1
 ```
 
-## Optional: audio support
+## External system dependencies
 
-```bash
-pip install markitdown[audio-transcription]
-```
+Image OCR and audio/video transcription rely on two system binaries. They are **not** bundled in the Python package — install them separately and make sure they are in your `PATH`. If either is missing, the app returns a clear installation guide as the conversion output.
 
-Then add to `SUPPORTED_EXTENSIONS` in `converter.py`:
+### Tesseract OCR (for images)
 
-```python
-".wav": "Audio (speech-to-text)",
-".mp3": "Audio (speech-to-text)",
-".m4a": "Audio (speech-to-text)",
-```
+| OS | Command |
+|----|---------|
+| Windows | `winget install UB-Mannheim.TesseractOCR` |
+| macOS | `brew install tesseract` |
+| Linux | `sudo apt install tesseract-ocr` |
 
-> **Note:** The default recognizer sends audio to Google's free Web Speech API — this breaks the offline guarantee.
+### FFmpeg (for audio/video)
+
+| OS | Command |
+|----|---------|
+| Windows | `winget install Gyan.FFmpeg` |
+| macOS | `brew install ffmpeg` |
+| Linux | `sudo apt install ffmpeg` |
+
+> Audio/video transcription uses [PocketSphinx](https://github.com/cmusphinx/pocketsphinx) — a fully offline speech recogniser. Long files are split into 60-second chunks before transcription. Accuracy is modest compared to cloud APIs, but nothing ever leaves your machine.
 
 ## Design notes
 
-- **No server, no AI.** MarkItDown is deterministic format-conversion code (parsers + rule-based extraction), not a language model. No `llm_client` is ever attached, so the optional AI image-captioning and Bing-search converters in upstream MarkItDown are never reachable here.
+- **No server, no AI.** MarkItDown is deterministic format-conversion code (parsers + rule-based extraction), not a language model. `enable_plugins=False` is passed so third-party plugins can't load. No `llm_client` is ever attached, so the optional AI image-captioning and Bing-search converters in upstream MarkItDown are never reachable here.
+- **Offline media via `media_handlers.py`.** Images, audio, and video bypass MarkItDown entirely and go through a custom offline pipeline: Tesseract for OCR, FFmpeg + PocketSphinx for transcription. If either binary is absent, the handler returns a markdown-formatted install guide rather than raising an error, so the output panel always shows something useful.
 - **Bytes over paths.** The frontend reads dropped/picked files as bytes in JS and ships them across the bridge as base64. This means drag-and-drop "just works" without relying on pywebview's more fragile native file-path APIs.
 - **Cache busting.** WebView2 caches aggressively. CSS/JS files use versioned names (`style.v2.css`, `app.v2.js`). Bump the version suffix when making breaking frontend changes.
 
