@@ -4,7 +4,7 @@ build.py
 Packages the app into a single standalone desktop binary with PyInstaller.
 
 Usage:
-    pip install -r requirements.txt
+    pip install -r requirements.txt -r requirements-build.txt
     python build.py
 
 Output:
@@ -34,6 +34,8 @@ args = [
     # on its own -- pull them in wholesale to be safe.
     "--collect-all=magika",
     "--collect-all=markitdown",
+    "--collect-all=pocketsphinx",
+    "--collect-all=pytesseract",
     "--collect-data=charset_normalizer",
     "--hidden-import=pyperclip",
     "--hidden-import=mammoth",
@@ -43,6 +45,7 @@ args = [
     "--hidden-import=pdfminer",
     "--hidden-import=pdfplumber",
     "--hidden-import=pptx",
+    "--hidden-import=PIL",
     "--clean",
     "--noconfirm",
 ]

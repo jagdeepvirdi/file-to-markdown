@@ -1,0 +1,4 @@
+# Build-only dependency — only needed to produce a standalone binary.
+# Install alongside requirements.txt:
+#   pip install -r requirements.txt -r requirements-build.txt
+pyinstaller>=6.0

@@ -20,5 +20,7 @@ pywebview>=5.0
 # Cross-platform clipboard access used by the "Copy" button
 pyperclip>=1.9
 
-# Only needed if you run build.py to produce a standalone .exe/.app
-pyinstaller>=6.0
+# Offline Media handler dependencies
+pocketsphinx>=5.1.1
+pytesseract>=0.3.10
+pillow>=10.0

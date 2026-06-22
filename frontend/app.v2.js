@@ -266,11 +266,11 @@ function startConversion(file) {
 }
 
 // Python posts the conversion result here via window.evaluate_js().
-window.__onConvertResult = function (result) {
+window.__onConvertResult = async function (result) {
   isConverting = false;
   convertBtnText.textContent = "Convert";
   convertSpinner.hidden = true;
-  
+
   if (pendingFile) {
     convertBtn.disabled = false;
   }
@@ -284,25 +284,25 @@ window.__onConvertResult = function (result) {
       title: result.title || pendingFilename,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
-    addLog(logItem);
-    loadLogItem(logItem);
+    await addLog(logItem);
+    await loadLogItem(logItem);
     clearSelection();
   } else {
     const errMsg = (result && result.error) || "Unknown error during conversion.";
-    onConversionError(errMsg);
+    await onConversionError(errMsg);
   }
 };
 
-function onConversionError(msg) {
+async function onConversionError(msg) {
   isConverting = false;
   convertBtnText.textContent = "Convert";
   convertSpinner.hidden = true;
   if (pendingFile) {
     convertBtn.disabled = false;
   }
-  
+
   showToast(msg, 5000);
-  
+
   const logItem = {
     id: Date.now().toString(),
     filename: pendingFilename,
@@ -310,7 +310,7 @@ function onConversionError(msg) {
     error: msg,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   };
-  addLog(logItem);
+  await addLog(logItem);
 }
 
 /* ---------------------------------------------------------------
@@ -392,10 +392,11 @@ function renderLogs() {
     const icon = item.success ? "✓" : "✗";
     const iconClass = item.success ? "success" : "error";
     
+    const escapedFilename = escapeHtml(item.filename);
     div.innerHTML = `
       <div class="log-item-info">
         <span class="log-item-icon ${iconClass}">${icon}</span>
-        <span class="log-item-name" title="${item.filename}">${item.filename}</span>
+        <span class="log-item-name" title="${escapedFilename}">${escapedFilename}</span>
       </div>
       <span class="log-item-time">${item.timestamp}</span>
     `;
@@ -571,7 +572,7 @@ marked.use({
         return `<span>${text}</span>`;
       }
       const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
-      return `<a href="${cleanHref}"${titleAttr} target="_blank" rel="noopener">${text}</a>`;
+      return `<a href="${escapeHtml(cleanHref)}"${titleAttr} target="_blank" rel="noopener">${text}</a>`;
     },
     image({ text }) {
       return text ? `<span class="img-ref">[image: ${escapeHtml(text)}]</span>` : "";

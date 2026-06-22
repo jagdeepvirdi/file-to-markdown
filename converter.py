@@ -42,9 +42,13 @@ SUPPORTED_EXTENSIONS = {
     ".ipynb": "Jupyter Notebook",
     ".msg": "Outlook Message",
     ".zip": "ZIP Archive (converts contents)",
-    ".jpg": "Image (EXIF + embedded/OCR text if any)",
-    ".jpeg": "Image (EXIF + embedded/OCR text if any)",
-    ".png": "Image (EXIF + embedded/OCR text if any)",
+    ".jpg": "Image (EXIF + OCR text)",
+    ".jpeg": "Image (EXIF + OCR text)",
+    ".png": "Image (EXIF + OCR text)",
+    ".mp3": "Audio (Offline Transcription)",
+    ".wav": "Audio (Offline Transcription)",
+    ".mp4": "Video (Offline Transcription)",
+    ".mkv": "Video (Offline Transcription)",
 }
 
 # Audio (.wav/.mp3/.m4a) is intentionally left out of the default build:
@@ -61,7 +65,7 @@ MAX_FILE_SIZE_BYTES = 80 * 1024 * 1024  # 80 MB
 # A single shared instance is fine: MarkItDown is stateless per-call
 # and we never register an llm_client, so nothing here ever leaves
 # the machine.
-_engine = MarkItDown()
+_engine = MarkItDown(enable_plugins=False)
 
 
 def convert_bytes(filename: str, data: bytes) -> dict:
@@ -98,9 +102,18 @@ def convert_bytes(filename: str, data: bytes) -> dict:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
 
-        result = _engine.convert(tmp_path)
-        markdown = (result.text_content or "").strip()
-        title = getattr(result, "title", None)
+        if ext in (".png", ".jpg", ".jpeg"):
+            from media_handlers import process_image
+            markdown = process_image(tmp_path).strip()
+            title = filename
+        elif ext in (".mp3", ".wav", ".mp4", ".mkv"):
+            from media_handlers import process_audio_video
+            markdown = process_audio_video(tmp_path).strip()
+            title = filename
+        else:
+            result = _engine.convert(tmp_path)
+            markdown = (result.text_content or "").strip()
+            title = getattr(result, "title", None)
 
         if not markdown:
             return {
