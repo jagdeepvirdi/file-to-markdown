@@ -6,11 +6,13 @@ Offline processing module for images (OCR via Tesseract) and audio/video
 """
 
 import os
+import signal
 import subprocess
 import tempfile
 import sys
 import glob
 import shutil
+import threading
 
 
 def process_image(file_path: str) -> str:
@@ -174,28 +176,40 @@ def process_audio_video(file_path: str) -> str:
                 return "## Audio/Video Transcript\n\n*No speech detected or transcribed.*"
 
             transcript_parts = []
-            
-            for index, chunk_file in enumerate(chunk_files):
-                segments = []
-                for phrase in AudioFile(chunk_file):
-                    text = str(phrase).strip()
-                    if text:
-                        segments.append(text)
-                
-                # Format text segments for that specific minute
-                if segments:
-                    paragraphs = []
-                    current_para = []
-                    for seg in segments:
-                        current_para.append(seg)
-                        if len(current_para) >= 5 or seg.endswith(('.', '?', '!')):
+
+            # PocketSphinx calls signal.signal() internally, which raises
+            # "signal only works in main thread" when called from a daemon thread.
+            # Temporarily patch it to a no-op for non-main threads, then restore.
+            _orig_signal = signal.signal
+
+            def _thread_safe_signal(sig, handler):
+                if threading.current_thread() is threading.main_thread():
+                    return _orig_signal(sig, handler)
+
+            signal.signal = _thread_safe_signal
+            try:
+                for index, chunk_file in enumerate(chunk_files):
+                    segments = []
+                    for phrase in AudioFile(chunk_file):
+                        text = str(phrase).strip()
+                        if text:
+                            segments.append(text)
+
+                    if segments:
+                        paragraphs = []
+                        current_para = []
+                        for seg in segments:
+                            current_para.append(seg)
+                            if len(current_para) >= 5 or seg.endswith(('.', '?', '!')):
+                                paragraphs.append("> " + " ".join(current_para))
+                                current_para = []
+                        if current_para:
                             paragraphs.append("> " + " ".join(current_para))
-                            current_para = []
-                    if current_para:
-                        paragraphs.append("> " + " ".join(current_para))
-                    
-                    chunk_md = "\n>\n".join(paragraphs)
-                    transcript_parts.append(f"### Minute {index + 1}\n\n{chunk_md}")
+
+                        chunk_md = "\n>\n".join(paragraphs)
+                        transcript_parts.append(f"### Minute {index + 1}\n\n{chunk_md}")
+            finally:
+                signal.signal = _orig_signal
 
             if not transcript_parts:
                 return "## Audio/Video Transcript\n\n*No speech detected or transcribed.*"
