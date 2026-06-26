@@ -61,8 +61,8 @@ Five distinct issues were identified by tracing the full memory lifecycle for a 
 **What happens:** Each `AudioFile(path)` call inside `_transcribe_one` loads the full PocketSphinx acoustic + language model (~150–250 MB). With `max_workers=4`, up to four models are alive simultaneously — a 600 MB–1 GB spike on top of base memory. Models are freed when each worker returns (CPython ref counting), but they are never shared or cached across workers, so the same model data is loaded and unloaded repeatedly for every chunk.
 
 **Fix:**
-- [ ] **`media_handlers.py`** — Load the PocketSphinx decoder once per worker thread (not once per chunk) by restructuring the executor to use a `threading.local`-backed decoder cache or an initialiser function (`initializer=` arg on `ThreadPoolExecutor`). Each worker initialises its own decoder once on first use and reuses it for all chunks it processes.
-- [ ] **`media_handlers.py`** — Reduce default `max_workers` from 4 to 2 as a conservative default; document that lowering it trades speed for RAM (each worker holds ~200 MB of model data).
+- [x] **`media_handlers.py`** — Load the PocketSphinx decoder once per worker thread (not once per chunk) by restructuring the executor to use a `threading.local`-backed decoder cache or an initialiser function (`initializer=` arg on `ThreadPoolExecutor`). Each worker initialises its own decoder once on first use and reuses it for all chunks it processes.
+- [x] **`media_handlers.py`** — Reduce default `max_workers` from 4 to 2 as a conservative default; document that lowering it trades speed for RAM (each worker holds ~200 MB of model data).
 
 ---
 
@@ -71,7 +71,7 @@ Five distinct issues were identified by tracing the full memory lifecycle for a 
 **What happens:** After the executor finishes, `results` (all segment lists) and `transcript_parts` (all formatted chunk strings) are both in memory while `"\n\n".join(transcript_parts)` builds the final `md_text`. At that moment three representations of the same text coexist: raw segments, formatted parts, and the joined string. For typical sparse PocketSphinx output this is a few hundred KB total — low severity, but unnecessary.
 
 **Fix:**
-- [ ] **`media_handlers.py`** — Add `del results` immediately after the assembly loop finishes consuming it, and `del transcript_parts` immediately after `md_text = "\n\n".join(transcript_parts)`. CPython's reference counting will free them before the function returns.
+- [x] **`media_handlers.py`** — Add `del results` immediately after the assembly loop finishes consuming it, and `del transcript_parts` immediately after `md_text = "\n\n".join(transcript_parts)`. CPython's reference counting will free them before the function returns.
 
 ---
 
@@ -80,8 +80,8 @@ Five distinct issues were identified by tracing the full memory lifecycle for a 
 **What happens:** In `__onConvertResult`, `logItem.markdown = result.markdown` is set and `logs.unshift(logItem)` stores it. `saveLogs` strips markdown from localStorage, but the **in-memory `logs` array keeps `.markdown` alive permanently**. Every conversion during a session, and every history entry clicked by the user, adds its full text to the heap. For 10 large video transcripts in one session, this is 10× (transcript size) sitting in JS memory with no way to reclaim it while the app is open.
 
 **Fix:**
-- [ ] **`frontend/app.v4.js`** — In `addLog`, after `save_history_file` succeeds, null out `logItem.markdown` (`logItem.markdown = null`). The text is already on disk and `currentMarkdown` holds the active copy.
-- [ ] **`frontend/app.v4.js`** — In `loadLogItem`, after `renderResult` is called (which sets `currentMarkdown`), null out `item.markdown` again so reopening a history entry doesn't permanently pin its text to the log entry. `currentMarkdown` is the single live copy; disk is the persistent store.
+- [x] **`frontend/app.v4.js`** — In `addLog`, after `save_history_file` succeeds, null out `logItem.markdown` (`logItem.markdown = null`). The text is already on disk and `currentMarkdown` holds the active copy.
+- [x] **`frontend/app.v4.js`** — In `loadLogItem`, after `renderResult` is called (which sets `currentMarkdown`), null out `item.markdown` again so reopening a history entry doesn't permanently pin its text to the log entry. `currentMarkdown` is the single live copy; disk is the persistent store.
 
 ---
 
@@ -90,7 +90,7 @@ Five distinct issues were identified by tracing the full memory lifecycle for a 
 **What happens:** `subprocess.run(..., stderr=subprocess.PIPE)` accumulates all of FFmpeg's stderr output (frame stats, timing, progress lines) in a `bytes` object in Python memory for the entire duration of the FFmpeg run — several minutes for a 2-hour video. This can reach a few MB. On the success path the bytes are discarded unused; only on `CalledProcessError` are they decoded and shown.
 
 **Fix:**
-- [ ] **`media_handlers.py`** — Capture stderr to a `tempfile.TemporaryFile()` instead of `subprocess.PIPE`. On success, close and discard the file. On `CalledProcessError`, seek to 0, read, and decode for the error message. This keeps stderr off the Python heap entirely during the subprocess run.
+- [x] **`media_handlers.py`** — Capture stderr to a `tempfile.TemporaryFile()` instead of `subprocess.PIPE`. On success, close and discard the file. On `CalledProcessError`, seek to 0, read, and decode for the error message. This keeps stderr off the Python heap entirely during the subprocess run.
 
 ---
 
@@ -99,7 +99,7 @@ Five distinct issues were identified by tracing the full memory lifecycle for a 
 **What happens:** `reader.readAsDataURL(file)` stores the base64 data URL in `reader.result` (~33% larger than the original). When passed to `convert_file`, the pywebview bridge serialises it as JSON — creating a second copy. Peak JS heap for an 80 MB file: ~214 MB simultaneously. GC timing for the reader closure is non-deterministic.
 
 **Fix:**
-- [ ] **`frontend/app.v4.js`** — After calling `window.pywebview.api.convert_file(...)`, set `reader.onload = null` and allow the enclosing closure to go out of scope promptly. The base64 string itself is owned by the browser engine and cannot be nulled, but eliminating the closure reference allows the reader to become GC-eligible sooner.
+- [x] **`frontend/app.v4.js`** — After calling `window.pywebview.api.convert_file(...)`, set `reader.onload = null` and allow the enclosing closure to go out of scope promptly. The base64 string itself is owned by the browser engine and cannot be nulled, but eliminating the closure reference allows the reader to become GC-eligible sooner.
 - [ ] *(Longer term)* Consider chunked upload over the bridge for the base64 path, sending the data in segments rather than one large string. This would cap peak JS memory to one chunk at a time.
 
 ---

@@ -42,39 +42,30 @@ class TestConverter(unittest.TestCase):
         )
 
     @unittest.mock.patch.dict("sys.modules", {"pocketsphinx": unittest.mock.MagicMock()})
+    @unittest.mock.patch("media_handlers._transcribe_one")
+    @unittest.mock.patch("media_handlers._init_decoder")
     @unittest.mock.patch("media_handlers.subprocess.run")
-    def test_audio_conversion_chunk_and_stitch(self, mock_subprocess_run):
-        import sys
-        mock_pocketsphinx = sys.modules["pocketsphinx"]
-        
-        # We need mock_subprocess_run to create dummy files in cwd
+    def test_audio_conversion_chunk_and_stitch(self, mock_subprocess_run, mock_init_decoder, mock_transcribe_one):
+        # Create dummy chunk files out-of-order to verify chronological sorting
         def side_effect(*args, **kwargs):
             cwd = kwargs.get("cwd")
             if cwd:
-                # Write them out-of-order to verify sorting
                 with open(os.path.join(cwd, "temp_chunk_001.wav"), "w") as f:
                     f.write("mock 1")
                 with open(os.path.join(cwd, "temp_chunk_000.wav"), "w") as f:
                     f.write("mock 0")
         mock_subprocess_run.side_effect = side_effect
 
-        # Mock AudioFile to return phrases depending on the input file
-        class MockPhrase:
-            def __init__(self, text):
-                self.text = text
-            def __str__(self):
-                return self.text
+        # Return controlled text per chunk; _init_decoder is a no-op mock
+        def transcribe_side_effect(args):
+            idx, path = args
+            if "temp_chunk_000" in path:
+                return (idx, ["hello world"])
+            elif "temp_chunk_001" in path:
+                return (idx, ["foo bar"])
+            return (idx, [])
+        mock_transcribe_one.side_effect = transcribe_side_effect
 
-        def audio_file_side_effect(chunk_path):
-            if "temp_chunk_000" in chunk_path:
-                return [MockPhrase("hello"), MockPhrase("world")]
-            elif "temp_chunk_001" in chunk_path:
-                return [MockPhrase("foo"), MockPhrase("bar")]
-            return []
-
-        mock_pocketsphinx.AudioFile.side_effect = audio_file_side_effect
-
-        # Now run conversion
         res = convert_bytes("test.mp4", b"dummy video content")
         self.assertTrue(res["success"])
         self.assertIn("### Minute 1", res["markdown"])

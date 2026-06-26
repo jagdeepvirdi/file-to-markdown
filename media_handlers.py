@@ -15,6 +15,39 @@ import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Thread-local storage for per-worker PocketSphinx decoders.
+# Each worker initialises its decoder once on first use via _init_decoder(),
+# eliminating the ~150-250 MB model reload that used to happen per chunk.
+_decoder_local = threading.local()
+
+
+def _init_decoder():
+    """Called once by each ThreadPoolExecutor worker to create its decoder."""
+    from pocketsphinx import Decoder
+    _decoder_local.decoder = Decoder()
+
+
+def _transcribe_one(args):
+    """Transcribe a single WAV chunk using the worker's cached decoder."""
+    idx, path = args
+    decoder = _decoder_local.decoder
+    segs = []
+    decoder.start_utt()
+    with open(path, 'rb') as fh:
+        fh.read(44)  # skip the standard 44-byte PCM WAV header from FFmpeg
+        while True:
+            buf = fh.read(2048)
+            if not buf:
+                break
+            decoder.process_raw(buf, False, False)
+    decoder.end_utt()
+    hyp = decoder.hypothesis()
+    if hyp and hyp.hypstr:
+        txt = hyp.hypstr.strip()
+        if txt:
+            segs.append(txt)
+    return idx, segs
+
 
 def process_image(file_path: str) -> str:
     """
@@ -100,7 +133,7 @@ def process_audio_video(file_path: str, progress_callback=None) -> str:
       - ("transcribing", n, total) after each chunk finishes
     """
     try:
-        from pocketsphinx import AudioFile
+        from pocketsphinx import Decoder  # noqa: F401 — availability check only
     except ImportError:
         instruction = (
             "## Dependency Error\n\n"
@@ -132,44 +165,47 @@ def process_audio_video(file_path: str, progress_callback=None) -> str:
             "temp_chunk_%03d.wav"
         ]
 
-        try:
-            subprocess.run(cmd, cwd=temp_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        except FileNotFoundError:
-            instruction = (
-                "## Dependency Error\n\n"
-                "**FFmpeg is not installed or not in your system PATH.**\n\n"
-                "To convert audio/video files offline, please install FFmpeg:\n\n"
-                "### Windows:\n"
-                "Run this command in PowerShell:\n"
-                "```powershell\n"
-                "winget install Gyan.FFmpeg\n"
-                "```\n\n"
-                "### macOS:\n"
-                "Run this command in Terminal:\n"
-                "```bash\n"
-                "brew install ffmpeg\n"
-                "```\n\n"
-                "### Linux:\n"
-                "Run this command:\n"
-                "```bash\n"
-                "sudo apt install ffmpeg\n"
-                "```"
-            )
-            print(instruction)
-            return instruction
-        except subprocess.CalledProcessError as e:
-            err_msg = (
-                f"## FFmpeg Error\n\n"
-                f"FFmpeg failed to convert media (Exit code: {e.returncode}).\n\n"
-                f"Error log details:\n"
-                f"```\n{e.stderr.decode('utf-8', errors='ignore')}\n```"
-            )
-            print(err_msg)
-            return err_msg
-        except Exception as e:
-            err_msg = f"## Audio Conversion Error\n\nAn unexpected error occurred during audio prep: {str(e)}"
-            print(err_msg)
-            return err_msg
+        with tempfile.TemporaryFile() as _stderr_tmp:
+            try:
+                subprocess.run(cmd, cwd=temp_dir, stdout=subprocess.DEVNULL, stderr=_stderr_tmp, check=True)
+            except FileNotFoundError:
+                instruction = (
+                    "## Dependency Error\n\n"
+                    "**FFmpeg is not installed or not in your system PATH.**\n\n"
+                    "To convert audio/video files offline, please install FFmpeg:\n\n"
+                    "### Windows:\n"
+                    "Run this command in PowerShell:\n"
+                    "```powershell\n"
+                    "winget install Gyan.FFmpeg\n"
+                    "```\n\n"
+                    "### macOS:\n"
+                    "Run this command in Terminal:\n"
+                    "```bash\n"
+                    "brew install ffmpeg\n"
+                    "```\n\n"
+                    "### Linux:\n"
+                    "Run this command:\n"
+                    "```bash\n"
+                    "sudo apt install ffmpeg\n"
+                    "```"
+                )
+                print(instruction)
+                return instruction
+            except subprocess.CalledProcessError as e:
+                _stderr_tmp.seek(0)
+                stderr_text = _stderr_tmp.read().decode("utf-8", errors="ignore")
+                err_msg = (
+                    f"## FFmpeg Error\n\n"
+                    f"FFmpeg failed to convert media (Exit code: {e.returncode}).\n\n"
+                    f"Error log details:\n"
+                    f"```\n{stderr_text}\n```"
+                )
+                print(err_msg)
+                return err_msg
+            except Exception as e:
+                err_msg = f"## Audio Conversion Error\n\nAn unexpected error occurred during audio prep: {str(e)}"
+                print(err_msg)
+                return err_msg
 
         # Transcribe the chunks
         try:
@@ -184,15 +220,6 @@ def process_audio_video(file_path: str, progress_callback=None) -> str:
             if progress_callback:
                 progress_callback("transcribing", 0, total)
 
-            def _transcribe_one(args):
-                idx, path = args
-                segs = []
-                for phrase in AudioFile(path):
-                    txt = str(phrase).strip()
-                    if txt:
-                        segs.append(txt)
-                return idx, segs
-
             # PocketSphinx calls signal.signal() internally, which raises
             # "signal only works in main thread" when called from a daemon thread.
             # Patch once before spawning workers; restore in finally regardless of outcome.
@@ -205,10 +232,12 @@ def process_audio_video(file_path: str, progress_callback=None) -> str:
             signal.signal = _thread_safe_signal
             results = {}
             completed = 0
-            max_workers = min(os.cpu_count() or 2, total, 4)
+            # 2 workers: each holds ~200 MB of model data; 4 workers would
+            # spike 600 MB–1 GB simultaneously for negligible throughput gain.
+            max_workers = min(os.cpu_count() or 2, total, 2)
 
             try:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                with ThreadPoolExecutor(max_workers=max_workers, initializer=_init_decoder) as executor:
                     futures = {
                         executor.submit(_transcribe_one, (i, f)): i
                         for i, f in enumerate(chunk_files)
@@ -241,11 +270,13 @@ def process_audio_video(file_path: str, progress_callback=None) -> str:
                         paragraphs.append("> " + " ".join(current_para))
                     chunk_md = "\n>\n".join(paragraphs)
                     transcript_parts.append(f"### Minute {index + 1}\n\n{chunk_md}")
+            del results
 
             if not transcript_parts:
                 return "## Audio/Video Transcript\n\n*No speech detected or transcribed.*"
 
             md_text = "\n\n".join(transcript_parts)
+            del transcript_parts
             return f"## Audio/Video Transcript\n\n{md_text}"
 
         except Exception as e:

@@ -378,6 +378,7 @@ function startConversion(file) {
     } catch (e) {
       onConversionError(String((e && e.message) || e));
     }
+    reader.onload = null; // release closure so the reader becomes GC-eligible sooner
   };
   reader.onerror = () => onConversionError("Could not read the file from disk.");
   reader.readAsDataURL(file);
@@ -441,6 +442,7 @@ async function addLog(logItem) {
     try {
       if (window.pywebview && window.pywebview.api) {
         await window.pywebview.api.save_history_file(logItem.id, logItem.markdown);
+        logItem.markdown = null; // disk is the store; don't pin transcript text in the logs array
       }
     } catch (e) {
       console.error("Failed to save log to disk cache", e);
@@ -559,6 +561,7 @@ async function loadLogItem(item) {
       }
     }
     renderResult(item.filename, item.markdown, item.title);
+    item.markdown = null; // currentMarkdown is the single live copy; disk is the persistent store
   }
 }
 
