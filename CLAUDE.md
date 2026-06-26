@@ -20,7 +20,7 @@ md-converter/
 │   └── test_converter.py  # Unit tests for convert_bytes, OCR, and transcription pipelines
 └── frontend/
     ├── index.html       # Single-page app shell
-    ├── app.v4.js        # All UI logic: native open picker, drag/drop, state, API calls, log history
+    ├── app.v5.js        # All UI logic: native open picker, drag/drop, state, API calls, log history
     ├── style.v2.css     # Dark-theme CSS (CSS variables, three-column grid)
     └── marked.umd.js    # marked v18 UMD build (bundled locally, no CDN)
 ```
@@ -67,7 +67,7 @@ python build.py
 - `media_handlers.py`: Performs offline image OCR via Pillow + PyTesseract; offline audio/video transcription via FFmpeg (segmented into 60-second PCM WAV chunks) + PocketSphinx; both functions return Markdown strings with graceful fallback instructions if Tesseract or FFmpeg are missing from PATH; in packaged builds, checks `sys._MEIPASS/tesseract/tesseract.exe` for a bundled Tesseract binary; one `pocketsphinx.Decoder` is created per worker thread via `ThreadPoolExecutor(initializer=_init_decoder)` and a module-level `threading.local` cache — the model (~200 MB) loads once per worker, not once per chunk; `max_workers` is capped at 2; PocketSphinx calls `signal.signal()` internally during decoder init — since conversions run on a daemon thread, `signal.signal` is temporarily monkey-patched to a no-op for non-main threads before the pool is created (restored in a `finally` block) to avoid `ValueError: signal only works in main thread`; FFmpeg stderr is captured to a `tempfile.TemporaryFile()` rather than `subprocess.PIPE` so it never accumulates in Python RAM
 - Conversions run in a `daemon=True` background thread so the UI stays responsive
 - Result is posted back to JS via `window.evaluate_js("window.__onConvertResult(...)")`
-- Full JS API surface: `get_supported_extensions()`, `get_max_file_size_mb()`, `convert_file(filename, base64_data)`, `select_file_dialog()`, `convert_file_path(file_path)`, `copy_to_clipboard(text)` (pyperclip), `save_file(content, suggested_name)` (native save dialog via `webview.SAVE_DIALOG`), `save_history_file(id, content)`, `read_history_file(id)`, `delete_history_file(id)`, `clear_history_files()` — history files stored under `~/.md-converter/history/<id>.md`; IDs are sanitized to alphanumeric + `-_` only
+- Full JS API surface: `get_supported_extensions()`, `get_max_file_size_mb()`, `convert_file(filename, base64_data)`, `select_file_dialog()`, `convert_file_path(file_path)`, `send_chunk(upload_id, chunk_b64)`, `convert_file_chunked(upload_id, filename)`, `copy_to_clipboard(text)` (pyperclip), `save_file(content, suggested_name)` (native save dialog via `webview.SAVE_DIALOG`), `save_history_file(id, content)`, `read_history_file(id)`, `delete_history_file(id)`, `clear_history_files()` — history files stored under `~/.md-converter/history/<id>.md`; IDs are sanitized to alphanumeric + `-_` only
 
 **Frontend (Vanilla JS)**
 - Three-column workspace: Input File | Action + Log History | Output Preview
@@ -76,12 +76,12 @@ python build.py
 - Markdown-to-HTML preview powered by [marked.js](https://github.com/markedjs/marked) v18 (UMD build bundled at `frontend/marked.umd.js`); custom renderer blocks `javascript:`/`data:`/`vbscript:` link schemes and renders images as text references
 
 **JS↔Python Bridge**
-- File data travels as `FileReader.readAsDataURL` (base64) — ~33% size overhead
+- Drag-and-drop files (≤80 MB) are uploaded in 4 MB slices: `startConversion` reads each slice with `FileReader.readAsDataURL`, strips the data-URL prefix, and sends the raw base64 to `send_chunk(uploadId, b64)` (awaited sequentially). After all slices, `convert_file_chunked(uploadId, filename)` triggers conversion. Peak JS heap per file is ~11 MB instead of ~214 MB for an 80 MB file. Python appends each decoded chunk directly to a `tempfile.mkstemp()` file, then renames it with the correct extension before converting.
 - `Api._window` is prefixed with `_` so pywebview's introspector skips it (prevents WebView2 hang)
 
 ## CSS/JS Cache Busting
 
-WebView2 caches aggressively. When updating styles or scripts, use versioned filenames (`style.v2.css`, `app.v4.js`) and update the `<link>` / `<script>` tags in `index.html` to match.
+WebView2 caches aggressively. When updating styles or scripts, use versioned filenames (`style.v2.css`, `app.v5.js`) and update the `<link>` / `<script>` tags in `index.html` to match.
 
 ## Keyboard Shortcuts
 

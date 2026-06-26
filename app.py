@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import threading
 
 import webview
@@ -38,6 +39,12 @@ def resource_path(relative_path: str) -> str:
     """Resolve a path that works both in dev and inside a PyInstaller bundle."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, relative_path)
+
+
+# In-progress chunked uploads: upload_id -> temp file path.
+# Keyed by an ID generated in JS; entries are removed when conversion starts or on error.
+_pending_uploads: dict = {}
+_pending_uploads_lock = threading.Lock()
 
 
 class Api:
@@ -116,6 +123,72 @@ class Api:
                 self._post_result({"success": False, "error": f"Could not read file data: {e}"})
                 return
             result = convert_bytes(filename, data, progress_callback=_progress)
+            self._post_result(result)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def send_chunk(self, upload_id: str, chunk_b64: str) -> dict:
+        """Append one base64-encoded chunk to the upload's temp file.
+
+        Called sequentially from JS (each call is awaited before the next),
+        so appends arrive in order and no chunk-index bookkeeping is needed.
+        On any error the partial temp file is cleaned up immediately.
+        """
+        try:
+            chunk_bytes = base64.b64decode(chunk_b64)
+            with _pending_uploads_lock:
+                if upload_id not in _pending_uploads:
+                    fd, path = tempfile.mkstemp(prefix="mdconv_")
+                    os.close(fd)
+                    _pending_uploads[upload_id] = path
+                path = _pending_uploads[upload_id]
+            with open(path, "ab") as f:
+                f.write(chunk_bytes)
+            return {"success": True}
+        except Exception as e:
+            with _pending_uploads_lock:
+                path = _pending_uploads.pop(upload_id, None)
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            log.error(f"send_chunk failed for upload {upload_id}", exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    def convert_file_chunked(self, upload_id: str, filename: str) -> None:
+        """Convert the fully-assembled chunked temp file in a background thread.
+
+        Renames the raw temp file to carry the correct extension (so MarkItDown
+        picks the right converter), delegates to convert_file_at_path, then
+        deletes the temp file regardless of success or failure.
+        The result arrives in JS via window.__onConvertResult().
+        """
+        def _progress(stage, completed, total):
+            self._post_progress(stage, completed, total)
+
+        def _run():
+            with _pending_uploads_lock:
+                raw_path = _pending_uploads.pop(upload_id, None)
+            if not raw_path:
+                self._post_result({"success": False, "error": "Upload session not found — please retry."})
+                return
+
+            ext = os.path.splitext(filename)[1].lower()
+            named_path = raw_path + ext
+            try:
+                os.rename(raw_path, named_path)
+                result = convert_file_at_path(named_path, progress_callback=_progress)
+            except Exception as e:
+                log.error("convert_file_chunked failed", exc_info=True)
+                result = {"success": False, "error": str(e)}
+            finally:
+                for p in (raw_path, named_path):
+                    try:
+                        if os.path.exists(p):
+                            os.remove(p)
+                    except OSError:
+                        pass
             self._post_result(result)
 
         threading.Thread(target=_run, daemon=True).start()

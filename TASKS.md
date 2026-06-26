@@ -100,7 +100,7 @@ Five distinct issues were identified by tracing the full memory lifecycle for a 
 
 **Fix:**
 - [x] **`frontend/app.v4.js`** — After calling `window.pywebview.api.convert_file(...)`, set `reader.onload = null` and allow the enclosing closure to go out of scope promptly. The base64 string itself is owned by the browser engine and cannot be nulled, but eliminating the closure reference allows the reader to become GC-eligible sooner.
-- [ ] *(Longer term)* Consider chunked upload over the bridge for the base64 path, sending the data in segments rather than one large string. This would cap peak JS memory to one chunk at a time.
+- [x] *(Longer term)* Chunked upload over the bridge for the base64 path: `startConversion` now reads the file in 4 MB slices via `File.slice()`, sends each as base64 via `send_chunk(uploadId, b64)` (awaited sequentially), then calls `convert_file_chunked(uploadId, filename)`. Peak JS heap for an 80 MB file drops from ~214 MB to ~11 MB (one 4 MB slice + its base64 at a time). Python appends decoded bytes directly to a temp file; no full in-memory copy is ever needed.
 
 ---
 
