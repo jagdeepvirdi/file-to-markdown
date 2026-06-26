@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>File → Markdown</title>
-<link rel="stylesheet" href="style.v2.css" />
+<link rel="stylesheet" href="style.v3.css" />
 </head>
 <body>
 
@@ -61,6 +61,13 @@
           </button>
         </div>
 
+        <div id="progressWrap" class="progress-wrap" hidden>
+          <div id="progressLabel" class="progress-label">Preparing…</div>
+          <div class="progress-bar-track">
+            <div id="progressBarFill" class="progress-bar-fill"></div>
+          </div>
+        </div>
+
         <div class="log-history">
           <div class="log-header">
             <h3>Log History</h3>
@@ -102,6 +109,6 @@
   </div>
 
   <script src="marked.umd.js"></script>
-  <script src="app.v3.js"></script>
+  <script src="app.v4.js"></script>
 </body>
 </html>

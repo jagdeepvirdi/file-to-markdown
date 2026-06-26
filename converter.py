@@ -68,7 +68,7 @@ MAX_FILE_SIZE_BYTES = 1000 * 1024 * 1024  # 1000 MB
 _engine = MarkItDown(enable_plugins=False)
 
 
-def convert_bytes(filename: str, data: bytes) -> dict:
+def convert_bytes(filename: str, data: bytes, progress_callback=None) -> dict:
     """
     Convert raw file bytes to markdown.
 
@@ -108,7 +108,7 @@ def convert_bytes(filename: str, data: bytes) -> dict:
             title = filename
         elif ext in (".mp3", ".wav", ".mp4", ".mkv"):
             from media_handlers import process_audio_video
-            markdown = process_audio_video(tmp_path).strip()
+            markdown = process_audio_video(tmp_path, progress_callback=progress_callback).strip()
             title = filename
         else:
             result = _engine.convert(tmp_path)
@@ -135,7 +135,7 @@ def convert_bytes(filename: str, data: bytes) -> dict:
                 pass
 
 
-def convert_file_at_path(file_path: str) -> dict:
+def convert_file_at_path(file_path: str, progress_callback=None) -> dict:
     """
     Convert a file directly from a path on disk.
     Avoids writing to a temp file or base64 decoding.
@@ -175,7 +175,7 @@ def convert_file_at_path(file_path: str) -> dict:
             title = filename
         elif ext in (".mp3", ".wav", ".mp4", ".mkv"):
             from media_handlers import process_audio_video
-            markdown = process_audio_video(file_path).strip()
+            markdown = process_audio_video(file_path, progress_callback=progress_callback).strip()
             title = filename
         else:
             result = _engine.convert(file_path)

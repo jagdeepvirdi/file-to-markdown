@@ -13,6 +13,7 @@ import sys
 import glob
 import shutil
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def process_image(file_path: str) -> str:
@@ -89,10 +90,14 @@ def process_image(file_path: str) -> str:
         return err_msg
 
 
-def process_audio_video(file_path: str) -> str:
+def process_audio_video(file_path: str, progress_callback=None) -> str:
     """
     Extract/downmix video or audio to mono 16kHz WAV via FFmpeg in 60-second chunks,
-    then transcribe each chunk sequentially using pocketsphinx.AudioFile.
+    then transcribe chunks in parallel using pocketsphinx.AudioFile.
+
+    progress_callback(stage, completed, total) is called:
+      - ("preparing", 0, 0)   while FFmpeg is running
+      - ("transcribing", n, total) after each chunk finishes
     """
     try:
         from pocketsphinx import AudioFile
@@ -111,6 +116,9 @@ def process_audio_video(file_path: str) -> str:
     temp_dir = tempfile.mkdtemp()
 
     try:
+        if progress_callback:
+            progress_callback("preparing", 0, 0)
+
         # Run ffmpeg to segment/downmix into 60-second PCM WAV chunks
         cmd = [
             "ffmpeg",
@@ -123,9 +131,8 @@ def process_audio_video(file_path: str) -> str:
             "-ar", "16000",
             "temp_chunk_%03d.wav"
         ]
-        
+
         try:
-            # Run silently by capturing stdout/stderr
             subprocess.run(cmd, cwd=temp_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         except FileNotFoundError:
             instruction = (
@@ -168,18 +175,27 @@ def process_audio_video(file_path: str) -> str:
         try:
             chunk_pattern = os.path.join(temp_dir, "temp_chunk_*.wav")
             chunk_files = glob.glob(chunk_pattern)
-            
-            # Sort the files alphabetically to ensure strict chronological order
             chunk_files.sort()
-            
+
             if not chunk_files:
                 return "## Audio/Video Transcript\n\n*No speech detected or transcribed.*"
 
-            transcript_parts = []
+            total = len(chunk_files)
+            if progress_callback:
+                progress_callback("transcribing", 0, total)
+
+            def _transcribe_one(args):
+                idx, path = args
+                segs = []
+                for phrase in AudioFile(path):
+                    txt = str(phrase).strip()
+                    if txt:
+                        segs.append(txt)
+                return idx, segs
 
             # PocketSphinx calls signal.signal() internally, which raises
             # "signal only works in main thread" when called from a daemon thread.
-            # Temporarily patch it to a no-op for non-main threads, then restore.
+            # Patch once before spawning workers; restore in finally regardless of outcome.
             _orig_signal = signal.signal
 
             def _thread_safe_signal(sig, handler):
@@ -187,29 +203,44 @@ def process_audio_video(file_path: str) -> str:
                     return _orig_signal(sig, handler)
 
             signal.signal = _thread_safe_signal
+            results = {}
+            completed = 0
+            max_workers = min(os.cpu_count() or 2, total, 4)
+
             try:
-                for index, chunk_file in enumerate(chunk_files):
-                    segments = []
-                    for phrase in AudioFile(chunk_file):
-                        text = str(phrase).strip()
-                        if text:
-                            segments.append(text)
-
-                    if segments:
-                        paragraphs = []
-                        current_para = []
-                        for seg in segments:
-                            current_para.append(seg)
-                            if len(current_para) >= 5 or seg.endswith(('.', '?', '!')):
-                                paragraphs.append("> " + " ".join(current_para))
-                                current_para = []
-                        if current_para:
-                            paragraphs.append("> " + " ".join(current_para))
-
-                        chunk_md = "\n>\n".join(paragraphs)
-                        transcript_parts.append(f"### Minute {index + 1}\n\n{chunk_md}")
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(_transcribe_one, (i, f)): i
+                        for i, f in enumerate(chunk_files)
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            idx, segs = future.result()
+                            results[idx] = segs
+                        except Exception:
+                            results[futures[future]] = []
+                        completed += 1
+                        if progress_callback:
+                            progress_callback("transcribing", completed, total)
             finally:
                 signal.signal = _orig_signal
+
+            # Assemble transcript in strict chronological order
+            transcript_parts = []
+            for index in sorted(results.keys()):
+                segments = results[index]
+                if segments:
+                    paragraphs = []
+                    current_para = []
+                    for seg in segments:
+                        current_para.append(seg)
+                        if len(current_para) >= 5 or seg.endswith(('.', '?', '!')):
+                            paragraphs.append("> " + " ".join(current_para))
+                            current_para = []
+                    if current_para:
+                        paragraphs.append("> " + " ".join(current_para))
+                    chunk_md = "\n>\n".join(paragraphs)
+                    transcript_parts.append(f"### Minute {index + 1}\n\n{chunk_md}")
 
             if not transcript_parts:
                 return "## Audio/Video Transcript\n\n*No speech detected or transcribed.*"
@@ -223,8 +254,6 @@ def process_audio_video(file_path: str) -> str:
             return err_msg
 
     finally:
-        # Bulletproof Cleanup
-        # Ensure that every single generated temp_chunk_*.wav file is safely deleted from the local disk
         try:
             chunks = glob.glob(os.path.join(temp_dir, "temp_chunk_*.wav"))
             for chunk_file in chunks:

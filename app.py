@@ -81,10 +81,14 @@ class Api:
         """Start conversion of a file on disk in a background thread.
 
         The result arrives in JS through window.__onConvertResult().
+        Progress (for audio/video) arrives through window.__onConvertProgress().
         """
+        def _progress(stage, completed, total):
+            self._post_progress(stage, completed, total)
+
         def _run():
             try:
-                result = convert_file_at_path(file_path)
+                result = convert_file_at_path(file_path, progress_callback=_progress)
             except Exception as e:
                 log.error("convert_file_path failed", exc_info=True)
                 result = {"success": False, "error": f"Failed to read file path: {e}"}
@@ -98,7 +102,11 @@ class Api:
         Returning immediately keeps the pywebview bridge thread free so the UI
         stays responsive during heavy conversions (large PDFs, etc.).
         The result arrives in JS through window.__onConvertResult().
+        Progress (for audio/video) arrives through window.__onConvertProgress().
         """
+        def _progress(stage, completed, total):
+            self._post_progress(stage, completed, total)
+
         def _run():
             try:
                 raw = base64_data.split(",")[-1]
@@ -107,7 +115,7 @@ class Api:
                 log.error("base64 decode failed", exc_info=True)
                 self._post_result({"success": False, "error": f"Could not read file data: {e}"})
                 return
-            result = convert_bytes(filename, data)
+            result = convert_bytes(filename, data, progress_callback=_progress)
             self._post_result(result)
 
         threading.Thread(target=_run, daemon=True).start()
@@ -118,6 +126,13 @@ class Api:
             self._window.evaluate_js(f"window.__onConvertResult({payload})")
         except Exception:
             log.error("evaluate_js failed posting conversion result", exc_info=True)
+
+    def _post_progress(self, stage: str, completed: int, total: int):
+        try:
+            payload = json.dumps({"stage": stage, "completed": completed, "total": total})
+            self._window.evaluate_js(f"window.__onConvertProgress({payload})")
+        except Exception:
+            pass
 
     def copy_to_clipboard(self, text: str) -> dict:
         try:
