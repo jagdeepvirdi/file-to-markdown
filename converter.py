@@ -58,9 +58,9 @@ SUPPORTED_EXTENSIONS = {
 #   pip install markitdown[audio-transcription]
 # and add the three extensions back to SUPPORTED_EXTENSIONS above.
 
-# Hard ceiling so a huge file doesn't choke the JS<->Python bridge
-# (everything is base64-encoded in transit, ~33% size overhead).
-MAX_FILE_SIZE_BYTES = 80 * 1024 * 1024  # 80 MB
+# Hard ceiling (1000 MB) to protect against memory exhaustion.
+# Small files are sent via base64, while large files are processed via direct disk paths.
+MAX_FILE_SIZE_BYTES = 1000 * 1024 * 1024  # 1000 MB
 
 # A single shared instance is fine: MarkItDown is stateless per-call
 # and we never register an llm_client, so nothing here ever leaves
@@ -133,3 +133,64 @@ def convert_bytes(filename: str, data: bytes) -> dict:
                 os.remove(tmp_path)
             except OSError:
                 pass
+
+
+def convert_file_at_path(file_path: str) -> dict:
+    """
+    Convert a file directly from a path on disk.
+    Avoids writing to a temp file or base64 decoding.
+    """
+    if not os.path.exists(file_path):
+        return {"success": False, "error": "File does not exist."}
+
+    filename = os.path.basename(file_path)
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext not in SUPPORTED_EXTENSIONS:
+        supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        return {
+            "success": False,
+            "error": f"Unsupported file type '{ext or 'unknown'}'.\n\nSupported: {supported}",
+        }
+
+    try:
+        size = os.path.getsize(file_path)
+    except OSError as e:
+        return {"success": False, "error": f"Could not access file size: {e}"}
+
+    if size > MAX_FILE_SIZE_BYTES:
+        mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+        return {
+            "success": False,
+            "error": f"File is too large ({size / (1024*1024):.1f} MB). Limit is {mb} MB.",
+        }
+
+    if size == 0:
+        return {"success": False, "error": "File is empty."}
+
+    try:
+        if ext in (".png", ".jpg", ".jpeg"):
+            from media_handlers import process_image
+            markdown = process_image(file_path).strip()
+            title = filename
+        elif ext in (".mp3", ".wav", ".mp4", ".mkv"):
+            from media_handlers import process_audio_video
+            markdown = process_audio_video(file_path).strip()
+            title = filename
+        else:
+            result = _engine.convert(file_path)
+            markdown = (result.text_content or "").strip()
+            title = getattr(result, "title", None)
+
+        if not markdown:
+            return {
+                "success": False,
+                "error": "Conversion produced no text content. The file may be empty, "
+                         "image-only without OCR-able text, or corrupted.",
+            }
+
+        return {"success": True, "markdown": markdown, "title": title}
+
+    except Exception as e:
+        return {"success": False, "error": f"{type(e).__name__}: {e}"}
+

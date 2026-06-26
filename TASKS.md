@@ -28,3 +28,22 @@ MarkItDown's image handler without an `llm_client` only pulls EXIF metadata — 
 - Expected `.exe` size increase: **+50–80 MB** (Tesseract binary + DLLs + tessdata).
 - End-user experience stays the same — no separate Tesseract install required.
 - Only the developer running `build.py` needs Tesseract installed locally (as the bundle source).
+
+## [x] Add Offline Audio & Video Transcription via FFmpeg and PocketSphinx
+
+**Goal:** Enable the app to transcribe audio and video files (MP3, WAV, MP4, MKV) to text, fully offline, and run as a standalone `.exe`.
+
+**Background:**
+MarkItDown's audio transcription by default relies on Google's online cloud speech API. To support fully offline, privacy-focused transcription, media files must be converted, segmented, and decoded locally.
+
+---
+
+### Subtasks
+
+- [x] **`requirements.txt`** — Add `pocketsphinx>=5.0.0` as a dependency.
+- [x] **`converter.py`** — Identify and route audio/video extensions (`.mp3`, `.wav`, `.mp4`, `.mkv`) to the offline processor in `media_handlers.py`.
+- [x] **`media_handlers.py`** — Write a robust pipeline that uses `ffmpeg` via Python subprocess to downmix/convert files to mono 16kHz PCM WAV format and segment them into 60-second chunks to make processing linear and memory-safe.
+- [x] **`media_handlers.py`** — Use `pocketsphinx` offline model to transcribe individual chunks and stitch the output back together with minute markers (e.g. `### Minute 1`) and paragraph indentation for better legibility.
+- [x] **`build.py`** — Include PocketSphinx assets and models wholesale in PyInstaller bundler configuration using `--collect-all=pocketsphinx`.
+- [x] **`tests/test_converter.py`** — Write mock-based unit tests asserting that media chunking, processing, and chronological stitching function correctly under the test suite without calling actual system binaries.
+

@@ -18,7 +18,7 @@ md-converter/
 ├── TASKS.md               # Backlog of improvements and future tasks
 ├── frontend/
 │   ├── index.html         # Single Page Application HTML structure
-│   ├── app.v2.js          # Drag/drop, validation, API integration, UI handlers
+│   ├── app.v3.js          # Drag/drop, validation, API integration, UI handlers
 │   ├── style.v2.css       # CSS variable stylesheet (cache-busted)
 │   └── marked.umd.js      # Marked.js Markdown parser library (local, offline)
 ├── tests/
@@ -31,10 +31,10 @@ md-converter/
 *   [media_handlers.py](file:///D:/Project/md-converter/media_handlers.py): Implements local image OCR text extraction and audio/video wav downmixing and speech transcription using PocketSphinx and FFmpeg.
 *   [build.py](file:///D:/Project/md-converter/build.py): Script to build a standalone platform binary using PyInstaller.
 *   [frontend/index.html](file:///D:/Project/md-converter/frontend/index.html): Defines the structured Single Page Application interface.
-*   [frontend/app.v2.js](file:///D:/Project/md-converter/frontend/app.v2.js): Handles GUI bindings, drag-and-drop, state orchestration, history list views, and clipboard/download API links.
+*   [frontend/app.v3.js](file:///D:/Project/md-converter/frontend/app.v3.js): Handles GUI bindings, drag-and-drop, state orchestration, history list views, and clipboard/download API links.
 *   [frontend/style.v2.css](file:///D:/Project/md-converter/frontend/style.v2.css): Contains layout variables, layout grid rules, scrollbar customizations, dark themes, and responsive queries.
 *   [frontend/marked.umd.js](file:///D:/Project/md-converter/frontend/marked.umd.js): Renders raw Markdown parsed as structured HTML fully client-side.
-*   [tests/test_converter.py](file:///D:/Project/md-converter/tests/test_converter.py): Validates basic engine functions (empty strings, valid documents, invalid formats).
+*   [tests/test_converter.py](file:///D:/Project/md-converter/tests/test_converter.py): Validates basic engine functions, offline image OCR fallbacks, and the audio/video transcription chunking/stitching pipelines.
 
 ---
 
@@ -106,7 +106,7 @@ Instead of a multi-stage wizard, the UI uses a desktop-grade side-by-side worksp
 
 ## 🛡️ Client-Side Security & XSS Prevention
 
-*   **HTML Sanitization:** To block potential cross-site scripting (XSS) payloads injected into source documents, a custom renderer override is registered on `marked` (the HTML builder in [app.v2.js](file:///D:/Project/md-converter/frontend/app.v2.js)).
+*   **HTML Sanitization:** To block potential cross-site scripting (XSS) payloads injected into source documents, a custom renderer override is registered on `marked` (the HTML builder in [app.v3.js](file:///D:/Project/md-converter/frontend/app.v3.js)).
 *   **Scheme Validation:** Links matching `javascript:`, `data:`, or `vbscript:` schemes are parsed and stripped into inert `<span>` wrappers rather than clickable anchors.
 *   **Outbound Privacy Rules:** To prevent telemetry tracking, unauthorized server connections, or local file inclusion exploits via standard image markup, images are rendered visually as plain text descriptors (`[image: <description>]`) instead of active `<img>` nodes.
 *   **Directory Traversal Prevention:** The file ID parameter passed to [save_history_file](file:///D:/Project/md-converter/app.py#L107), [read_history_file](file:///D:/Project/md-converter/app.py#L120), and [delete_history_file](file:///D:/Project/md-converter/app.py#L133) is validated on the backend. Only alphanumeric characters, dashes, and underscores are allowed (`safe_id = "".join(c for c in file_id if c.isalnum() or c in ("-", "_"))`), keeping the operations isolated to the designated history directory.
@@ -127,6 +127,10 @@ python -m unittest tests/test_converter.py
 *   **Plain Text Processing:** Validates that clean input formats convert with success statuses and exact content matching.
 *   **Type Guard Verification:** Assures that attempting to convert unsupported types (e.g. `.exe`) raises an expected type failure.
 *   **Empty Boundaries:** Asserts empty files fail gracefully with explicit empty indicators rather than causing downstream interpreter crashes.
+*   **Offline OCR (Image Routing):** Verifies that processing image file types (.jpg, .jpeg, .png) triggers offline OCR routing, and gracefully returns formatted fallback dependency error descriptions if Tesseract is missing.
+*   **Offline Audio/Video Transcription:** Verifies that processing audio/video file types (.mp3, .wav, .mp4, .mkv) triggers background transcription via pocketsphinx and ffmpeg, returning proper fallback screens on dependency error.
+*   **Minute-by-Minute Transcription Chunking & Stitching:** Validates that audio/video files are downmixed, segmented, processed, and successfully stitched into a chronological markdown transcript complete with minute headers (e.g., `### Minute 1`).
+*   **Direct Path Conversion:** Validates that files converted using the disk-path bridge (`convert_file_at_path`) successfully convert without copying to a temporary file.
 
 ---
 
@@ -160,11 +164,11 @@ Building is managed by [build.py](file:///D:/Project/md-converter/build.py) usin
 ## 🛡️ Cache Bypassing
 
 WebView2 stores aggressive browser caches for CSS/JS resources. To deploy style or script updates safely:
-*   Modify layout code in [style.v2.css](file:///D:/Project/md-converter/frontend/style.v2.css) and scripting in [app.v2.js](file:///D:/Project/md-converter/frontend/app.v2.js).
+*   Modify layout code in [style.v2.css](file:///D:/Project/md-converter/frontend/style.v2.css) and scripting in [app.v3.js](file:///D:/Project/md-converter/frontend/app.v3.js).
 *   Maintain the cache-busting filename structure (`style.vN.css` and `app.vN.js`) in [index.html](file:///D:/Project/md-converter/frontend/index.html) loader tags:
     ```html
     <link rel="stylesheet" href="style.v2.css" />
-    <script src="app.v2.js"></script>
+    <script src="app.v3.js"></script>
     ```
 
 ---

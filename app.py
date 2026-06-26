@@ -17,7 +17,7 @@ import threading
 import webview
 import pyperclip
 
-from converter import convert_bytes, SUPPORTED_EXTENSIONS, MAX_FILE_SIZE_BYTES
+from converter import convert_bytes, convert_file_at_path, SUPPORTED_EXTENSIONS, MAX_FILE_SIZE_BYTES
 
 
 # Write errors to ~/.md-converter/error.log so crashes are diagnosable
@@ -51,6 +51,46 @@ class Api:
 
     def get_max_file_size_mb(self):
         return MAX_FILE_SIZE_BYTES // (1024 * 1024)
+
+    def select_file_dialog(self) -> dict:
+        try:
+            # Build file types list from SUPPORTED_EXTENSIONS
+            # e.g., "Supported Files (*.pdf;*.docx;...)"
+            ext_list = ";*".join(SUPPORTED_EXTENSIONS.keys())
+            file_types = (
+                f"Supported Files (*{ext_list})",
+                "All Files (*.*)"
+            )
+            result = self._window.create_file_dialog(
+                webview.FileDialog.OPEN,
+                allow_multiple=False,
+                file_types=file_types
+            )
+            if not result:
+                return {"success": False, "cancelled": True}
+            path = result if isinstance(result, str) else result[0]
+            # Get file size and name to return to frontend
+            size = os.path.getsize(path)
+            name = os.path.basename(path)
+            return {"success": True, "path": path, "name": name, "size": size}
+        except Exception as e:
+            log.error("select_file_dialog failed", exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    def convert_file_path(self, file_path: str) -> None:
+        """Start conversion of a file on disk in a background thread.
+
+        The result arrives in JS through window.__onConvertResult().
+        """
+        def _run():
+            try:
+                result = convert_file_at_path(file_path)
+            except Exception as e:
+                log.error("convert_file_path failed", exc_info=True)
+                result = {"success": False, "error": f"Failed to read file path: {e}"}
+            self._post_result(result)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def convert_file(self, filename: str, base64_data: str) -> None:
         """Start conversion in a background thread; post result via evaluate_js.

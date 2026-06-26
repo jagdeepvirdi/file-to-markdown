@@ -35,6 +35,7 @@ let currentMarkdown  = "";
 let currentBaseName  = "output";
 let pendingFilename  = "";
 let pendingFile      = null;   // File object held between selection and Convert click
+let pendingFilePath  = "";     // File path on disk held for native conversions
 let apiReady         = false;
 let supportedExtensions = new Set();
 let maxFileSizeBytes    = 80 * 1024 * 1024;
@@ -117,11 +118,41 @@ extToggle.addEventListener("click", () => {
 /* ---------------------------------------------------------------
    File selection (click + drag/drop)
 --------------------------------------------------------------- */
-dropZone.addEventListener("click", () => fileInput.click());
-dropZone.addEventListener("keydown", (e) => {
+dropZone.addEventListener("click", async () => {
+  if (isConverting) return;
+  if (window.pywebview && window.pywebview.api) {
+    try {
+      const res = await window.pywebview.api.select_file_dialog();
+      if (res && res.success) {
+        handleNativeFile(res.path, res.name, res.size);
+      } else if (res && res.error) {
+        showToast("Error selecting file: " + res.error);
+      }
+    } catch (e) {
+      fileInput.click();
+    }
+  } else {
+    fileInput.click();
+  }
+});
+dropZone.addEventListener("keydown", async (e) => {
   if (e.key === "Enter" || e.key === " ") {
     e.preventDefault();
-    fileInput.click();
+    if (isConverting) return;
+    if (window.pywebview && window.pywebview.api) {
+      try {
+        const res = await window.pywebview.api.select_file_dialog();
+        if (res && res.success) {
+          handleNativeFile(res.path, res.name, res.size);
+        } else if (res && res.error) {
+          showToast("Error selecting file: " + res.error);
+        }
+      } catch (e) {
+        fileInput.click();
+      }
+    } else {
+      fileInput.click();
+    }
   }
 });
 
@@ -168,7 +199,7 @@ document.addEventListener("drop", (e) => {
 document.addEventListener("keydown", (e) => {
   // Escape: clear selection or clear active preview
   if (e.key === "Escape") {
-    if (pendingFile) {
+    if (pendingFile || pendingFilePath) {
       clearSelection();
     } else if (currentMarkdown) {
       clearPreview();
@@ -176,7 +207,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   // Ctrl/Cmd+Enter: trigger Convert when a file is selected
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && pendingFile && !isConverting) {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && (pendingFile || pendingFilePath) && !isConverting) {
     convertBtn.click();
     return;
   }
@@ -205,15 +236,18 @@ function handleFile(file) {
     showToast(`Unsupported file type '${ext || "unknown"}'.\n\nDrop a supported file to convert.`, 4000);
     return;
   }
-  if (file.size > maxFileSizeBytes) {
-    const limitMb = (maxFileSizeBytes / (1024 * 1024)).toFixed(0);
-    const fileMb  = (file.size  / (1024 * 1024)).toFixed(1);
-    showToast(`File is too large (${fileMb} MB). Limit is ${limitMb} MB.`, 4000);
+
+  // Files sent via drag-and-drop or fileInput must be loaded into browser memory
+  // and base64-encoded, which fails/hangs for huge files. We limit this to 80 MB.
+  const MAX_BASE64_SIZE_BYTES = 80 * 1024 * 1024;
+  if (file.size > MAX_BASE64_SIZE_BYTES) {
+    showToast(`Files larger than 80 MB must be selected by clicking to browse (using the native picker).`, 5000);
     return;
   }
 
   // File is valid
   pendingFile = file;
+  pendingFilePath = "";
   readyFilename.textContent = file.name;
   
   // Show selected file card, hide dropzone
@@ -224,11 +258,43 @@ function handleFile(file) {
   convertBtn.disabled = false;
 }
 
+function handleNativeFile(path, name, size) {
+  if (!apiReady) {
+    showToast("Still starting up — try again in a moment");
+    return;
+  }
 
+  // Client-side validation before touching the bridge
+  const dotIdx = name.lastIndexOf(".");
+  const ext = dotIdx !== -1 ? name.slice(dotIdx).toLowerCase() : "";
+  if (supportedExtensions.size > 0 && !supportedExtensions.has(ext)) {
+    showToast(`Unsupported file type '${ext || "unknown"}'.\n\nDrop a supported file to convert.`, 4000);
+    return;
+  }
+  if (size > maxFileSizeBytes) {
+    const limitMb = (maxFileSizeBytes / (1024 * 1024)).toFixed(0);
+    const fileMb  = (size  / (1024 * 1024)).toFixed(1);
+    showToast(`File is too large (${fileMb} MB). Limit is ${limitMb} MB.`, 4000);
+    return;
+  }
+
+  // File is valid
+  pendingFile = null;
+  pendingFilePath = path;
+  readyFilename.textContent = name;
+  
+  // Show selected file card, hide dropzone
+  dropZone.hidden = true;
+  selectedCard.hidden = false;
+  
+  // Enable convert button
+  convertBtn.disabled = false;
+}
 
 function clearSelection() {
   fileInput.value = "";
   pendingFile = null;
+  pendingFilePath = "";
   readyFilename.textContent = "";
   
   dropZone.hidden = false;
@@ -241,8 +307,28 @@ function clearSelection() {
    Conversion Flow
 --------------------------------------------------------------- */
 convertBtn.addEventListener("click", () => {
-  if (pendingFile) startConversion(pendingFile);
+  if (pendingFilePath) {
+    startConversionPath(pendingFilePath, readyFilename.textContent);
+  } else if (pendingFile) {
+    startConversion(pendingFile);
+  }
 });
+
+function startConversionPath(path, filename) {
+  isConverting = true;
+  pendingFilename = filename;
+
+  // Update button loading state
+  convertBtn.disabled = true;
+  convertBtnText.textContent = "Converting...";
+  convertSpinner.hidden = false;
+
+  try {
+    window.pywebview.api.convert_file_path(path);
+  } catch (e) {
+    onConversionError(String((e && e.message) || e));
+  }
+}
 
 function startConversion(file) {
   isConverting = true;
@@ -271,7 +357,7 @@ window.__onConvertResult = async function (result) {
   convertBtnText.textContent = "Convert";
   convertSpinner.hidden = true;
 
-  if (pendingFile) {
+  if (pendingFile || pendingFilePath) {
     convertBtn.disabled = false;
   }
 
@@ -297,7 +383,7 @@ async function onConversionError(msg) {
   isConverting = false;
   convertBtnText.textContent = "Convert";
   convertSpinner.hidden = true;
-  if (pendingFile) {
+  if (pendingFile || pendingFilePath) {
     convertBtn.disabled = false;
   }
 
