@@ -4,9 +4,9 @@ A local-first, fully offline desktop app: drop a file, get clean Markdown back.
 Powered by Microsoft's [MarkItDown](https://github.com/microsoft/markitdown).
 No AI, no uploads, no internet required.
 
-[![Latest Release](https://img.shields.io/github/v/release/jagdeepvirdi/file-to-markdown)](https://github.com/jagdeepvirdi/file-to-markdown/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/jagdeepvirdi/file-to-markdown)](https://github.com/jagdeepvirdi/file-to-markdown/releases/tag/v1.1.0)
 
-**[⬇ Download for Windows (x64)](https://github.com/jagdeepvirdi/file-to-markdown/releases/latest/download/FileToMarkdown-windows-x64.exe)**
+**[⬇ Download for Windows (x64)](https://github.com/jagdeepvirdi/file-to-markdown/releases/download/v1.1.0/FileToMarkdown-windows-x64.exe)**
 
 ```
 ┌──────────────────┬──────────────────┬──────────────────────────────┐
