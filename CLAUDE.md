@@ -20,7 +20,7 @@ md-converter/
 │   └── test_converter.py  # Unit tests for convert_bytes, OCR, and transcription pipelines
 └── frontend/
     ├── index.html       # Single-page app shell
-    ├── app.v3.js        # All UI logic: native open picker, drag/drop, state, API calls, log history
+    ├── app.v4.js        # All UI logic: native open picker, drag/drop, state, API calls, log history
     ├── style.v2.css     # Dark-theme CSS (CSS variables, three-column grid)
     └── marked.umd.js    # marked v18 UMD build (bundled locally, no CDN)
 ```
@@ -64,7 +64,7 @@ python build.py
 - Window config: 1000×740, min 720×560, resizable
 - `converter.py`: Intercepts and routes images (`.png`, `.jpg`, `.jpeg`) and audio/video (`.mp3`, `.wav`, `.mp4`, `.mkv`) to `media_handlers.py`; other formats are converted via MarkItDown (writes to a temp file, converts, then deletes it)
 - `converter.py` exports `SUPPORTED_EXTENSIONS` dict (`.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.csv`, `.json`, `.jsonl`, `.txt`, `.md`, `.html`, `.epub`, `.ipynb`, `.msg`, `.zip`, `.jpg`, `.jpeg`, `.png`, `.mp3`, `.wav`, `.mp4`, `.mkv`) and `MAX_FILE_SIZE_BYTES` (1000 MB); both are imported by `app.py` and exposed to the frontend
-- `media_handlers.py`: Performs offline image OCR via Pillow + PyTesseract; offline audio/video transcription via FFmpeg (segmented into 60-second PCM WAV chunks) + PocketSphinx; both functions return Markdown strings with graceful fallback instructions if Tesseract or FFmpeg are missing from PATH; in packaged builds, checks `sys._MEIPASS/tesseract/tesseract.exe` for a bundled Tesseract binary; PocketSphinx's `AudioFile` calls `signal.signal()` internally — since conversions run on a daemon thread, `signal.signal` is temporarily monkey-patched to a no-op for non-main threads around the transcription loop (restored in a `finally` block) to avoid `ValueError: signal only works in main thread`
+- `media_handlers.py`: Performs offline image OCR via Pillow + PyTesseract; offline audio/video transcription via FFmpeg (segmented into 60-second PCM WAV chunks) + PocketSphinx; both functions return Markdown strings with graceful fallback instructions if Tesseract or FFmpeg are missing from PATH; in packaged builds, checks `sys._MEIPASS/tesseract/tesseract.exe` for a bundled Tesseract binary; one `pocketsphinx.Decoder` is created per worker thread via `ThreadPoolExecutor(initializer=_init_decoder)` and a module-level `threading.local` cache — the model (~200 MB) loads once per worker, not once per chunk; `max_workers` is capped at 2; PocketSphinx calls `signal.signal()` internally during decoder init — since conversions run on a daemon thread, `signal.signal` is temporarily monkey-patched to a no-op for non-main threads before the pool is created (restored in a `finally` block) to avoid `ValueError: signal only works in main thread`; FFmpeg stderr is captured to a `tempfile.TemporaryFile()` rather than `subprocess.PIPE` so it never accumulates in Python RAM
 - Conversions run in a `daemon=True` background thread so the UI stays responsive
 - Result is posted back to JS via `window.evaluate_js("window.__onConvertResult(...)")`
 - Full JS API surface: `get_supported_extensions()`, `get_max_file_size_mb()`, `convert_file(filename, base64_data)`, `select_file_dialog()`, `convert_file_path(file_path)`, `copy_to_clipboard(text)` (pyperclip), `save_file(content, suggested_name)` (native save dialog via `webview.SAVE_DIALOG`), `save_history_file(id, content)`, `read_history_file(id)`, `delete_history_file(id)`, `clear_history_files()` — history files stored under `~/.md-converter/history/<id>.md`; IDs are sanitized to alphanumeric + `-_` only
@@ -81,7 +81,7 @@ python build.py
 
 ## CSS/JS Cache Busting
 
-WebView2 caches aggressively. When updating styles or scripts, use versioned filenames (`style.v2.css`, `app.v3.js`) and update the `<link>` / `<script>` tags in `index.html` to match.
+WebView2 caches aggressively. When updating styles or scripts, use versioned filenames (`style.v2.css`, `app.v4.js`) and update the `<link>` / `<script>` tags in `index.html` to match.
 
 ## Keyboard Shortcuts
 

@@ -18,7 +18,7 @@ md-converter/
 ├── TASKS.md               # Backlog of improvements and future tasks
 ├── frontend/
 │   ├── index.html         # Single Page Application HTML structure
-│   ├── app.v3.js          # Drag/drop, validation, API integration, UI handlers
+│   ├── app.v4.js          # Drag/drop, validation, API integration, UI handlers
 │   ├── style.v2.css       # CSS variable stylesheet (cache-busted)
 │   └── marked.umd.js      # Marked.js Markdown parser library (local, offline)
 ├── tests/
@@ -31,7 +31,7 @@ md-converter/
 *   [media_handlers.py](file:///D:/Project/md-converter/media_handlers.py): Implements local image OCR text extraction and audio/video wav downmixing and speech transcription using PocketSphinx and FFmpeg.
 *   [build.py](file:///D:/Project/md-converter/build.py): Script to build a standalone platform binary using PyInstaller.
 *   [frontend/index.html](file:///D:/Project/md-converter/frontend/index.html): Defines the structured Single Page Application interface.
-*   [frontend/app.v3.js](file:///D:/Project/md-converter/frontend/app.v3.js): Handles GUI bindings, drag-and-drop, state orchestration, history list views, and clipboard/download API links.
+*   [frontend/app.v4.js](file:///D:/Project/md-converter/frontend/app.v4.js): Handles GUI bindings, drag-and-drop, state orchestration, history list views, and clipboard/download API links.
 *   [frontend/style.v2.css](file:///D:/Project/md-converter/frontend/style.v2.css): Contains layout variables, layout grid rules, scrollbar customizations, dark themes, and responsive queries.
 *   [frontend/marked.umd.js](file:///D:/Project/md-converter/frontend/marked.umd.js): Renders raw Markdown parsed as structured HTML fully client-side.
 *   [tests/test_converter.py](file:///D:/Project/md-converter/tests/test_converter.py): Validates basic engine functions, offline image OCR fallbacks, and the audio/video transcription chunking/stitching pipelines.
@@ -44,7 +44,7 @@ The app operates fully offline using a native browser window managed by `pywebvi
 
 ```mermaid
 graph TD
-    A["index.html"] -->|Drag & Drop File| B("app.v3.js")
+    A["index.html"] -->|Drag & Drop File| B("app.v4.js")
     B -->|Client-side validation size/type| C{"Valid?"}
     C -->|No| D["showToast error alert"]
     C -->|Yes| E["Show Input Info Card"]
@@ -65,12 +65,12 @@ graph TD
 *   **API Bridge:** The [Api](file:///D:/Project/md-converter/app.py#L43) class is exposed to JavaScript as `window.pywebview.api`.
 *   **Introspector Safety:** The webview reference on the API class is stored as `self._window` (prefixed with `_`). This prevents the `pywebview` introspector from recursively analyzing the window object and causing WebView2 to hang.
 *   **Background Threads:** Conversions are run inside a python `threading.Thread(daemon=True)`. This keeps the API bridge thread free so the frontend remains completely responsive (with loading animations) during CPU-heavy conversions.
-*   **PocketSphinx Signal Patch:** PocketSphinx's `AudioFile` calls `signal.signal()` internally to register a SIGINT handler. Python raises `ValueError: signal only works in main thread` when this is called from a daemon thread. To work around this, `media_handlers.process_audio_video()` temporarily replaces `signal.signal` with a no-op wrapper for non-main threads before iterating `AudioFile`, then restores the original in a `finally` block.
+*   **PocketSphinx Decoder Caching & Signal Patch:** Audio/video transcription creates one `pocketsphinx.Decoder` per worker thread (not one per chunk) via `ThreadPoolExecutor(initializer=_init_decoder)` and a `threading.local` cache, so the ~200 MB acoustic model is loaded once per worker rather than once per 60-second chunk. PocketSphinx calls `signal.signal()` internally during decoder initialisation, which raises `ValueError: signal only works in main thread` from a daemon thread. To work around this, `media_handlers.process_audio_video()` temporarily replaces `signal.signal` with a no-op wrapper for non-main threads before creating the pool, then restores the original in a `finally` block. `max_workers` is capped at 2 so peak model RAM stays around 400 MB rather than spiking to 600 MB–1 GB.
 *   **MarkItDown Configurations:** Uses `MarkItDown(enable_plugins=False)` as the engine inside [converter.py](file:///D:/Project/md-converter/converter.py). `enable_plugins=False` prevents third-party plugins from loading or making network calls. Audio transcription via MarkItDown is intentionally omitted because it defaults to Google's online speech API — audio/video is handled offline by [media_handlers.py](file:///D:/Project/md-converter/media_handlers.py) instead.
 *   **Temp File Requirement:** Because MarkItDown requires a physical disk path to determine the converter engine type (e.g. `.docx`, `.xlsx`, `.pdf`), file contents are written to a secure, temporary file via `tempfile.mkstemp()`, parsed, and then instantly deleted in a `finally` block inside [convert_bytes](file:///D:/Project/md-converter/converter.py#L67).
 *   **Offline Media Handlers:** Intercepts media files in [converter.py](file:///D:/Project/md-converter/converter.py) to route them to custom offline modules in [media_handlers.py](file:///D:/Project/md-converter/media_handlers.py):
     *   **Images (`.png`, `.jpg`, `.jpeg`):** Opens with `Pillow` and processes using `pytesseract` OCR to extract formatted layout blocks.
-    *   **Audio/Video (`.mp3`, `.wav`, `.mp4`, `.mkv`):** Uses `ffmpeg` to downmix to single-channel 16kHz PCM WAV format and decodes offline via pocketsphinx.
+    *   **Audio/Video (`.mp3`, `.wav`, `.mp4`, `.mkv`):** Uses `ffmpeg` to downmix to single-channel 16kHz PCM WAV format, segments into 60-second chunks, then transcribes in parallel (up to 2 worker threads) via `pocketsphinx.Decoder`. FFmpeg stderr is streamed to a `tempfile.TemporaryFile()` rather than buffered in RAM. The final transcript is assembled in chronological order with minute markers.
 
 ---
 
@@ -107,7 +107,7 @@ Instead of a multi-stage wizard, the UI uses a desktop-grade side-by-side worksp
 
 ## 🛡️ Client-Side Security & XSS Prevention
 
-*   **HTML Sanitization:** To block potential cross-site scripting (XSS) payloads injected into source documents, a custom renderer override is registered on `marked` (the HTML builder in [app.v3.js](file:///D:/Project/md-converter/frontend/app.v3.js)).
+*   **HTML Sanitization:** To block potential cross-site scripting (XSS) payloads injected into source documents, a custom renderer override is registered on `marked` (the HTML builder in [app.v4.js](file:///D:/Project/md-converter/frontend/app.v4.js)).
 *   **Scheme Validation:** Links matching `javascript:`, `data:`, or `vbscript:` schemes are parsed and stripped into inert `<span>` wrappers rather than clickable anchors.
 *   **Outbound Privacy Rules:** To prevent telemetry tracking, unauthorized server connections, or local file inclusion exploits via standard image markup, images are rendered visually as plain text descriptors (`[image: <description>]`) instead of active `<img>` nodes.
 *   **Directory Traversal Prevention:** The file ID parameter passed to [save_history_file](file:///D:/Project/md-converter/app.py#L107), [read_history_file](file:///D:/Project/md-converter/app.py#L120), and [delete_history_file](file:///D:/Project/md-converter/app.py#L133) is validated on the backend. Only alphanumeric characters, dashes, and underscores are allowed (`safe_id = "".join(c for c in file_id if c.isalnum() or c in ("-", "_"))`), keeping the operations isolated to the designated history directory.
@@ -165,11 +165,11 @@ Building is managed by [build.py](file:///D:/Project/md-converter/build.py) usin
 ## 🛡️ Cache Bypassing
 
 WebView2 stores aggressive browser caches for CSS/JS resources. To deploy style or script updates safely:
-*   Modify layout code in [style.v2.css](file:///D:/Project/md-converter/frontend/style.v2.css) and scripting in [app.v3.js](file:///D:/Project/md-converter/frontend/app.v3.js).
+*   Modify layout code in [style.v2.css](file:///D:/Project/md-converter/frontend/style.v2.css) and scripting in [app.v4.js](file:///D:/Project/md-converter/frontend/app.v4.js).
 *   Maintain the cache-busting filename structure (`style.vN.css` and `app.vN.js`) in [index.html](file:///D:/Project/md-converter/frontend/index.html) loader tags:
     ```html
     <link rel="stylesheet" href="style.v2.css" />
-    <script src="app.v3.js"></script>
+    <script src="app.v4.js"></script>
     ```
 
 ---
