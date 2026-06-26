@@ -44,7 +44,7 @@ The app operates fully offline using a native browser window managed by `pywebvi
 
 ```mermaid
 graph TD
-    A["index.html"] -->|Drag & Drop File| B("app.v2.js")
+    A["index.html"] -->|Drag & Drop File| B("app.v3.js")
     B -->|Client-side validation size/type| C{"Valid?"}
     C -->|No| D["showToast error alert"]
     C -->|Yes| E["Show Input Info Card"]
@@ -65,6 +65,7 @@ graph TD
 *   **API Bridge:** The [Api](file:///D:/Project/md-converter/app.py#L43) class is exposed to JavaScript as `window.pywebview.api`.
 *   **Introspector Safety:** The webview reference on the API class is stored as `self._window` (prefixed with `_`). This prevents the `pywebview` introspector from recursively analyzing the window object and causing WebView2 to hang.
 *   **Background Threads:** Conversions are run inside a python `threading.Thread(daemon=True)`. This keeps the API bridge thread free so the frontend remains completely responsive (with loading animations) during CPU-heavy conversions.
+*   **PocketSphinx Signal Patch:** PocketSphinx's `AudioFile` calls `signal.signal()` internally to register a SIGINT handler. Python raises `ValueError: signal only works in main thread` when this is called from a daemon thread. To work around this, `media_handlers.process_audio_video()` temporarily replaces `signal.signal` with a no-op wrapper for non-main threads before iterating `AudioFile`, then restores the original in a `finally` block.
 *   **MarkItDown Configurations:** Uses `MarkItDown(enable_plugins=False)` as the engine inside [converter.py](file:///D:/Project/md-converter/converter.py). `enable_plugins=False` prevents third-party plugins from loading or making network calls. Audio transcription via MarkItDown is intentionally omitted because it defaults to Google's online speech API — audio/video is handled offline by [media_handlers.py](file:///D:/Project/md-converter/media_handlers.py) instead.
 *   **Temp File Requirement:** Because MarkItDown requires a physical disk path to determine the converter engine type (e.g. `.docx`, `.xlsx`, `.pdf`), file contents are written to a secure, temporary file via `tempfile.mkstemp()`, parsed, and then instantly deleted in a `finally` block inside [convert_bytes](file:///D:/Project/md-converter/converter.py#L67).
 *   **Offline Media Handlers:** Intercepts media files in [converter.py](file:///D:/Project/md-converter/converter.py) to route them to custom offline modules in [media_handlers.py](file:///D:/Project/md-converter/media_handlers.py):
