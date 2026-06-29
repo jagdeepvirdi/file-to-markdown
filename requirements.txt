@@ -21,6 +21,6 @@ pywebview>=5.0
 pyperclip>=1.9
 
 # Offline Media handler dependencies
-pocketsphinx>=5.1.1
+openai-whisper>=20231117
 pytesseract>=0.3.10
 pillow>=10.0

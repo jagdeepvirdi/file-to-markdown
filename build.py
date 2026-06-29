@@ -34,7 +34,8 @@ args = [
     # on its own -- pull them in wholesale to be safe.
     "--collect-all=magika",
     "--collect-all=markitdown",
-    "--collect-all=pocketsphinx",
+    "--collect-all=whisper",
+    "--hidden-import=tiktoken_ext.openai_public",
     "--collect-all=pytesseract",
     "--collect-data=charset_normalizer",
     "--hidden-import=pyperclip",

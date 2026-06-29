@@ -41,11 +41,8 @@ class TestConverter(unittest.TestCase):
             res["markdown"].startswith("## Audio Conversion Error")
         )
 
-    @unittest.mock.patch.dict("sys.modules", {"pocketsphinx": unittest.mock.MagicMock()})
-    @unittest.mock.patch("media_handlers._transcribe_one")
-    @unittest.mock.patch("media_handlers._init_decoder")
     @unittest.mock.patch("media_handlers.subprocess.run")
-    def test_audio_conversion_chunk_and_stitch(self, mock_subprocess_run, mock_init_decoder, mock_transcribe_one):
+    def test_audio_conversion_chunk_and_stitch(self, mock_subprocess_run):
         # Create dummy chunk files out-of-order to verify chronological sorting
         def side_effect(*args, **kwargs):
             cwd = kwargs.get("cwd")
@@ -56,17 +53,20 @@ class TestConverter(unittest.TestCase):
                     f.write("mock 0")
         mock_subprocess_run.side_effect = side_effect
 
-        # Return controlled text per chunk; _init_decoder is a no-op mock
-        def transcribe_side_effect(args):
-            idx, path = args
+        mock_whisper = unittest.mock.MagicMock()
+        mock_model = unittest.mock.MagicMock()
+        def transcribe_side_effect(path, **kwargs):
             if "temp_chunk_000" in path:
-                return (idx, ["hello world"])
+                return {"text": "hello world"}
             elif "temp_chunk_001" in path:
-                return (idx, ["foo bar"])
-            return (idx, [])
-        mock_transcribe_one.side_effect = transcribe_side_effect
+                return {"text": "foo bar"}
+            return {"text": ""}
+        mock_model.transcribe.side_effect = transcribe_side_effect
+        mock_whisper.load_model.return_value = mock_model
 
-        res = convert_bytes("test.mp4", b"dummy video content")
+        with unittest.mock.patch.dict("sys.modules", {"whisper": mock_whisper}):
+            res = convert_bytes("test.mp4", b"dummy video content")
+
         self.assertTrue(res["success"])
         self.assertIn("### Minute 1", res["markdown"])
         self.assertIn("### Minute 2", res["markdown"])

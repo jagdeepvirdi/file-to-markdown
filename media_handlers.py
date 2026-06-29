@@ -2,51 +2,15 @@
 media_handlers.py
 -----------------
 Offline processing module for images (OCR via Tesseract) and audio/video
-(transcription via FFmpeg downmixing and PocketSphinx).
+(transcription via FFmpeg downmixing and OpenAI Whisper).
 """
 
 import os
-import signal
 import subprocess
 import tempfile
 import sys
 import glob
 import shutil
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# Thread-local storage for per-worker PocketSphinx decoders.
-# Each worker initialises its decoder once on first use via _init_decoder(),
-# eliminating the ~150-250 MB model reload that used to happen per chunk.
-_decoder_local = threading.local()
-
-
-def _init_decoder():
-    """Called once by each ThreadPoolExecutor worker to create its decoder."""
-    from pocketsphinx import Decoder
-    _decoder_local.decoder = Decoder()
-
-
-def _transcribe_one(args):
-    """Transcribe a single WAV chunk using the worker's cached decoder."""
-    idx, path = args
-    decoder = _decoder_local.decoder
-    segs = []
-    decoder.start_utt()
-    with open(path, 'rb') as fh:
-        fh.read(44)  # skip the standard 44-byte PCM WAV header from FFmpeg
-        while True:
-            buf = fh.read(2048)
-            if not buf:
-                break
-            decoder.process_raw(buf, False, False)
-    decoder.end_utt()
-    hyp = decoder.hypothesis()
-    if hyp and hyp.hypstr:
-        txt = hyp.hypstr.strip()
-        if txt:
-            segs.append(txt)
-    return idx, segs
 
 
 def process_image(file_path: str) -> str:
@@ -126,21 +90,21 @@ def process_image(file_path: str) -> str:
 def process_audio_video(file_path: str, progress_callback=None) -> str:
     """
     Extract/downmix video or audio to mono 16kHz WAV via FFmpeg in 60-second chunks,
-    then transcribe chunks in parallel using pocketsphinx.AudioFile.
+    then transcribe each chunk sequentially using OpenAI Whisper (offline).
 
     progress_callback(stage, completed, total) is called:
-      - ("preparing", 0, 0)   while FFmpeg is running
+      - ("preparing", 0, 0)     while FFmpeg is running
       - ("transcribing", n, total) after each chunk finishes
     """
     try:
-        from pocketsphinx import Decoder  # noqa: F401 — availability check only
+        import whisper
     except ImportError:
         instruction = (
             "## Dependency Error\n\n"
-            "**Required Python packages are missing.**\n\n"
-            "Please install pocketsphinx in your environment:\n"
+            "**Required Python package is missing.**\n\n"
+            "Please install openai-whisper in your environment:\n"
             "```bash\n"
-            "pip install pocketsphinx\n"
+            "pip install openai-whisper\n"
             "```"
         )
         print(instruction)
@@ -207,97 +171,40 @@ def process_audio_video(file_path: str, progress_callback=None) -> str:
                 print(err_msg)
                 return err_msg
 
-        # Transcribe the chunks
+        chunk_files = sorted(glob.glob(os.path.join(temp_dir, "temp_chunk_*.wav")))
+
+        if not chunk_files:
+            return "## Audio/Video Transcript\n\n*No audio track found or file contains no audio.*"
+
+        total = len(chunk_files)
+        if progress_callback:
+            progress_callback("transcribing", 0, total)
+
         try:
-            chunk_pattern = os.path.join(temp_dir, "temp_chunk_*.wav")
-            chunk_files = glob.glob(chunk_pattern)
-            chunk_files.sort()
-
-            if not chunk_files:
-                return "## Audio/Video Transcript\n\n*No speech detected or transcribed.*"
-
-            total = len(chunk_files)
-            if progress_callback:
-                progress_callback("transcribing", 0, total)
-
-            # PocketSphinx calls signal.signal() internally, which raises
-            # "signal only works in main thread" when called from a daemon thread.
-            # Patch once before spawning workers; restore in finally regardless of outcome.
-            _orig_signal = signal.signal
-
-            def _thread_safe_signal(sig, handler):
-                if threading.current_thread() is threading.main_thread():
-                    return _orig_signal(sig, handler)
-
-            signal.signal = _thread_safe_signal
-            results = {}
-            completed = 0
-            # 2 workers: each holds ~200 MB of model data; 4 workers would
-            # spike 600 MB–1 GB simultaneously for negligible throughput gain.
-            max_workers = min(os.cpu_count() or 2, total, 2)
-
-            try:
-                with ThreadPoolExecutor(max_workers=max_workers, initializer=_init_decoder) as executor:
-                    futures = {
-                        executor.submit(_transcribe_one, (i, f)): i
-                        for i, f in enumerate(chunk_files)
-                    }
-                    for future in as_completed(futures):
-                        try:
-                            idx, segs = future.result()
-                            results[idx] = segs
-                        except Exception:
-                            results[futures[future]] = []
-                        completed += 1
-                        if progress_callback:
-                            progress_callback("transcribing", completed, total)
-            finally:
-                signal.signal = _orig_signal
-
-            # Assemble transcript in strict chronological order
+            # Load the model once; "base" (~290 MB) balances accuracy and CPU speed.
+            # fp16=False avoids a warning on CPU-only machines (Whisper defaults to fp16 for GPU).
+            model = whisper.load_model("base")
             transcript_parts = []
-            for index in sorted(results.keys()):
-                segments = results[index]
-                if segments:
-                    paragraphs = []
-                    current_para = []
-                    for seg in segments:
-                        current_para.append(seg)
-                        if len(current_para) >= 5 or seg.endswith(('.', '?', '!')):
-                            paragraphs.append("> " + " ".join(current_para))
-                            current_para = []
-                    if current_para:
-                        paragraphs.append("> " + " ".join(current_para))
-                    chunk_md = "\n>\n".join(paragraphs)
-                    transcript_parts.append(f"### Minute {index + 1}\n\n{chunk_md}")
-            del results
+            for i, chunk_path in enumerate(chunk_files):
+                result = model.transcribe(chunk_path, fp16=False)
+                text = result["text"].strip()
+                if text:
+                    transcript_parts.append(f"### Minute {i + 1}\n\n> {text}")
+                if progress_callback:
+                    progress_callback("transcribing", i + 1, total)
 
             if not transcript_parts:
                 return "## Audio/Video Transcript\n\n*No speech detected or transcribed.*"
 
-            md_text = "\n\n".join(transcript_parts)
-            del transcript_parts
-            return f"## Audio/Video Transcript\n\n{md_text}"
+            return "## Audio/Video Transcript\n\n" + "\n\n".join(transcript_parts)
 
         except Exception as e:
-            err_msg = f"## Transcription Error\n\nAn error occurred during decoding: {str(e)}"
+            err_msg = f"## Transcription Error\n\nAn error occurred during transcription: {str(e)}"
             print(err_msg)
             return err_msg
 
     finally:
         try:
-            chunks = glob.glob(os.path.join(temp_dir, "temp_chunk_*.wav"))
-            for chunk_file in chunks:
-                if os.path.exists(chunk_file):
-                    try:
-                        os.remove(chunk_file)
-                    except OSError:
-                        pass
-        except Exception:
-            pass
-
-        try:
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+            shutil.rmtree(temp_dir)
         except OSError:
             pass

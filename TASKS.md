@@ -29,25 +29,25 @@ MarkItDown's image handler without an `llm_client` only pulls EXIF metadata — 
 - End-user experience stays the same — no separate Tesseract install required.
 - Only the developer running `build.py` needs Tesseract installed locally (as the bundle source).
 
-## [x] Add Offline Audio & Video Transcription via FFmpeg and PocketSphinx
+## [x] Add Offline Audio & Video Transcription via FFmpeg and OpenAI Whisper
 
 **Goal:** Enable the app to transcribe audio and video files (MP3, WAV, MP4, MKV) to text, fully offline, and run as a standalone `.exe`.
 
 **Background:**
-MarkItDown's audio transcription by default relies on Google's online cloud speech API. To support fully offline, privacy-focused transcription, media files must be converted, segmented, and decoded locally.
+MarkItDown's audio transcription by default relies on Google's online cloud speech API. To support fully offline, privacy-focused transcription, media files must be converted, segmented, and decoded locally. Initially implemented with PocketSphinx; later migrated to OpenAI Whisper for significantly better accuracy.
 
 ---
 
 ### Subtasks
 
-- [x] **`requirements.txt`** — Add `pocketsphinx>=5.0.0` as a dependency.
+- [x] **`requirements.txt`** — Add `openai-whisper>=20231117` as a dependency (replaced `pocketsphinx`).
 - [x] **`converter.py`** — Identify and route audio/video extensions (`.mp3`, `.wav`, `.mp4`, `.mkv`) to the offline processor in `media_handlers.py`.
 - [x] **`media_handlers.py`** — Write a robust pipeline that uses `ffmpeg` via Python subprocess to downmix/convert files to mono 16kHz PCM WAV format and segment them into 60-second chunks to make processing linear and memory-safe.
-- [x] **`media_handlers.py`** — Use `pocketsphinx` offline model to transcribe individual chunks and stitch the output back together with minute markers (e.g. `### Minute 1`) and paragraph indentation for better legibility.
-- [x] **`build.py`** — Include PocketSphinx assets and models wholesale in PyInstaller bundler configuration using `--collect-all=pocketsphinx`.
+- [x] **`media_handlers.py`** — Use OpenAI Whisper (`base` model, ~290 MB) to transcribe individual chunks sequentially and stitch the output back together with minute markers (e.g. `### Minute 1`). Model is loaded once per conversion call with `fp16=False`.
+- [x] **`build.py`** — Include Whisper assets wholesale using `--collect-all=whisper` and `--hidden-import=tiktoken_ext.openai_public` in PyInstaller bundler configuration.
 - [x] **`tests/test_converter.py`** — Write mock-based unit tests asserting that media chunking, processing, and chronological stitching function correctly under the test suite without calling actual system binaries.
 
-## [ ] Fix Memory Handling for Large Audio/Video Files
+## [x] Fix Memory Handling for Large Audio/Video Files
 
 **Goal:** Reduce peak RAM usage and eliminate session-level memory accumulation when processing large media files (e.g. 900 MB MP4).
 
@@ -56,13 +56,14 @@ Five distinct issues were identified by tracing the full memory lifecycle for a 
 
 ---
 
-### Issue #1 — PocketSphinx model loaded fresh per worker (Python, **High**)
+### Issue #1 — Transcription engine replaced: PocketSphinx → OpenAI Whisper (Python, **High**)
 
-**What happens:** Each `AudioFile(path)` call inside `_transcribe_one` loads the full PocketSphinx acoustic + language model (~150–250 MB). With `max_workers=4`, up to four models are alive simultaneously — a 600 MB–1 GB spike on top of base memory. Models are freed when each worker returns (CPython ref counting), but they are never shared or cached across workers, so the same model data is loaded and unloaded repeatedly for every chunk.
+**What happens:** PocketSphinx loaded its full acoustic + language model (~150–250 MB) once per worker thread. With `max_workers=4`, up to four models were alive simultaneously — a 600 MB–1 GB RAM spike. Accuracy was also poor compared to modern ASR models.
 
 **Fix:**
-- [x] **`media_handlers.py`** — Load the PocketSphinx decoder once per worker thread (not once per chunk) by restructuring the executor to use a `threading.local`-backed decoder cache or an initialiser function (`initializer=` arg on `ThreadPoolExecutor`). Each worker initialises its own decoder once on first use and reuses it for all chunks it processes.
-- [x] **`media_handlers.py`** — Reduce default `max_workers` from 4 to 2 as a conservative default; document that lowering it trades speed for RAM (each worker holds ~200 MB of model data).
+- [x] **`media_handlers.py`** — Replaced PocketSphinx entirely with OpenAI Whisper (`base` model, ~290 MB). Whisper is loaded once per conversion call and chunks are transcribed sequentially — no thread pool, no `signal` monkey-patching, and substantially better transcription accuracy.
+- [x] **`requirements.txt`** — Replaced `pocketsphinx` with `openai-whisper>=20231117`.
+- [x] **`build.py`** — Replaced `--collect-all=pocketsphinx` with `--collect-all=whisper` and added `--hidden-import=tiktoken_ext.openai_public`.
 
 ---
 
