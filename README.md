@@ -35,8 +35,8 @@ No AI, no uploads, no internet required.
 | Email | `.msg` | |
 | Archive | `.zip` | Converts all supported files inside |
 | Images | `.jpg`, `.jpeg`, `.png` | Offline OCR via Tesseract — requires Tesseract in PATH |
-| Audio | `.mp3`, `.wav` | Offline transcription via FFmpeg + PocketSphinx — requires FFmpeg in PATH |
-| Video | `.mp4`, `.mkv` | Offline transcription via FFmpeg + PocketSphinx — requires FFmpeg in PATH |
+| Audio | `.mp3`, `.wav` | Offline transcription via FFmpeg + Whisper — requires FFmpeg in PATH |
+| Video | `.mp4`, `.mkv` | Offline transcription via FFmpeg + Whisper — requires FFmpeg in PATH |
 
 ## How it works
 
@@ -51,7 +51,7 @@ window.pywebview.api.convert_file(name, data)   ← network-free Python bridge
     │      └─ media_handlers.process_image() → Tesseract OCR
     │
     ├─ audio/video (.mp3/.wav/.mp4/.mkv)
-    │      └─ media_handlers.process_audio_video() → FFmpeg → PocketSphinx
+    │      └─ media_handlers.process_audio_video() → FFmpeg → Whisper
     │
     └─ everything else → MarkItDown(enable_plugins=False) → temp file deleted
     ▼
@@ -69,7 +69,7 @@ Everything runs in a single process on your machine. The "desktop app" is [pyweb
 - **Three-column workspace** — file picker, conversion controls + log history, and live Markdown preview side by side
 - **Persistent log history** — past conversions survive app restarts; click any entry to reload its output. Large markdown files are stored on disk (`~/.md-converter/history/`) rather than in localStorage to avoid the 5 MB cap
 - **Offline image OCR** — images are processed by Tesseract locally; no cloud vision API. Requires [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) installed and in PATH
-- **Offline audio/video transcription** — media files are segmented into 60-second chunks by FFmpeg, then transcribed by PocketSphinx — entirely on-device. Requires [FFmpeg](https://ffmpeg.org/download.html) installed and in PATH. Both tools return a clear installation guide if missing
+- **Offline audio/video transcription** — media files are segmented into 60-second chunks by FFmpeg, then transcribed by OpenAI Whisper (`base` model, ~290 MB, downloaded on first use) — entirely on-device. Requires [FFmpeg](https://ffmpeg.org/download.html) installed and in PATH. Both tools return a clear installation guide if missing
 - **Markdown preview** — rendered via [marked.js](https://github.com/markedjs/marked) v18, bundled locally (no CDN). XSS-safe: `javascript:`, `data:`, and `vbscript:` link schemes are blocked; `href` attributes are HTML-escaped; images render as `[image: alt]` text references
 - **Keyboard shortcuts**
 
@@ -80,7 +80,7 @@ Everything runs in a single process on your machine. The "desktop app" is [pyweb
   | `Ctrl+C` | Copy Markdown (when no text is selected) |
 
 - **1000 MB file cap** — files up to 80 MB can be processed via drag-and-drop (base64-encoded), while files between 80 MB and 1000 MB must be opened by clicking the drop zone (which launches the native system file picker to pass the file path directly to Python, bypassing memory bottlenecks)
-- **No network calls** — `MarkItDown(enable_plugins=False)`, no `llm_client` attached, Tesseract and PocketSphinx run fully on-device, no telemetry
+- **No network calls** — `MarkItDown(enable_plugins=False)`, no `llm_client` attached, Tesseract and Whisper run fully on-device, no telemetry
 
 ## Prerequisites
 
@@ -105,7 +105,7 @@ Key packages installed:
 | `markitdown[pdf,docx,pptx,xlsx,xls,outlook]` | Core document-to-markdown conversion |
 | `pywebview >= 5.0` | Native desktop window (wraps the OS web renderer) |
 | `pyperclip >= 1.9` | Cross-platform clipboard access for the Copy button |
-| `pocketsphinx >= 5.1.1` | Fully offline speech recognition for audio/video |
+| `openai-whisper >= 20231117` | Fully offline speech recognition for audio/video |
 | `pytesseract >= 0.3.10` | Python wrapper for Tesseract OCR |
 | `Pillow >= 10.0` | Image loading for OCR pre-processing |
 
@@ -148,7 +148,7 @@ After installing on Windows, ensure `C:\Program Files\Tesseract-OCR` is in your 
 md-converter/
 ├── app.py                  # pywebview entry point + Python API exposed to JS
 ├── converter.py            # MarkItDown wrapper, supported-extension registry
-├── media_handlers.py       # Offline image OCR (Tesseract) and audio/video transcription (FFmpeg + PocketSphinx)
+├── media_handlers.py       # Offline image OCR (Tesseract) and audio/video transcription (FFmpeg + Whisper)
 ├── requirements.txt        # Runtime Python dependencies
 ├── requirements-build.txt  # Build-only dependency (PyInstaller)
 ├── build.py                # PyInstaller packaging script
@@ -204,7 +204,7 @@ Drop an `icon.ico` (Windows) or `icon.icns` (macOS) next to `build.py` before bu
 ## Design notes
 
 - **No server, no AI.** MarkItDown is deterministic format-conversion code (parsers + rule-based extraction), not a language model. `enable_plugins=False` is passed so third-party plugins can't load. No `llm_client` is ever attached, so the optional AI image-captioning and Bing-search converters in upstream MarkItDown are never reachable here.
-- **Offline media via `media_handlers.py`.** Images, audio, and video bypass MarkItDown entirely and go through a custom offline pipeline: Tesseract for OCR, FFmpeg + PocketSphinx for transcription. If either binary is absent, the handler returns a markdown-formatted install guide rather than raising an error, so the output panel always shows something useful.
+- **Offline media via `media_handlers.py`.** Images, audio, and video bypass MarkItDown entirely and go through a custom offline pipeline: Tesseract for OCR, FFmpeg + OpenAI Whisper for transcription. If either binary is absent, the handler returns a markdown-formatted install guide rather than raising an error, so the output panel always shows something useful.
 - **Bytes over paths.** The frontend reads dropped/picked files as bytes in JS and ships them across the bridge as base64. This means drag-and-drop "just works" without relying on pywebview's more fragile native file-path APIs.
 - **Cache busting.** WebView2 caches aggressively. CSS/JS files use versioned names (`style.v2.css`, `app.v5.js`). Bump the version suffix when making breaking frontend changes.
 
