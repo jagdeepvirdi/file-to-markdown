@@ -21,7 +21,7 @@ md-converter/
 └── frontend/
     ├── index.html       # Single-page app shell
     ├── app.v5.js        # All UI logic: native open picker, drag/drop, state, API calls, log history
-    ├── style.v2.css     # Dark-theme CSS (CSS variables, three-column grid)
+    ├── style.v3.css     # Dark-theme CSS (CSS variables, three-column grid)
     └── marked.umd.js    # marked v18 UMD build (bundled locally, no CDN)
 ```
 
@@ -82,7 +82,7 @@ python build.py
 
 ## CSS/JS Cache Busting
 
-WebView2 caches aggressively. When updating styles or scripts, use versioned filenames (`style.v2.css`, `app.v5.js`) and update the `<link>` / `<script>` tags in `index.html` to match.
+WebView2 caches aggressively. When updating styles or scripts, use versioned filenames (`style.v3.css`, `app.v5.js`) and update the `<link>` / `<script>` tags in `index.html` to match.
 
 ## Keyboard Shortcuts
 

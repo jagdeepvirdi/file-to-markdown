@@ -19,7 +19,7 @@ md-converter/
 ├── frontend/
 │   ├── index.html         # Single Page Application HTML structure
 │   ├── app.v5.js          # Drag/drop, validation, API integration, UI handlers
-│   ├── style.v2.css       # CSS variable stylesheet (cache-busted)
+│   ├── style.v3.css       # CSS variable stylesheet (cache-busted)
 │   └── marked.umd.js      # Marked.js Markdown parser library (local, offline)
 ├── tests/
 │   └── test_converter.py  # Unit tests for the local conversion engine
@@ -32,7 +32,7 @@ md-converter/
 *   [build.py](file:///D:/Project/md-converter/build.py): Script to build a standalone platform binary using PyInstaller.
 *   [frontend/index.html](file:///D:/Project/md-converter/frontend/index.html): Defines the structured Single Page Application interface.
 *   [frontend/app.v5.js](file:///D:/Project/md-converter/frontend/app.v5.js): Handles GUI bindings, drag-and-drop, state orchestration, history list views, and clipboard/download API links.
-*   [frontend/style.v2.css](file:///D:/Project/md-converter/frontend/style.v2.css): Contains layout variables, layout grid rules, scrollbar customizations, dark themes, and responsive queries.
+*   [frontend/style.v3.css](file:///D:/Project/md-converter/frontend/style.v3.css): Contains layout variables, layout grid rules, scrollbar customizations, dark themes, and responsive queries.
 *   [frontend/marked.umd.js](file:///D:/Project/md-converter/frontend/marked.umd.js): Renders raw Markdown parsed as structured HTML fully client-side.
 *   [tests/test_converter.py](file:///D:/Project/md-converter/tests/test_converter.py): Validates basic engine functions, offline image OCR fallbacks, and the audio/video transcription chunking/stitching pipelines.
 
@@ -165,10 +165,10 @@ Building is managed by [build.py](file:///D:/Project/md-converter/build.py) usin
 ## 🛡️ Cache Bypassing
 
 WebView2 stores aggressive browser caches for CSS/JS resources. To deploy style or script updates safely:
-*   Modify layout code in [style.v2.css](file:///D:/Project/md-converter/frontend/style.v2.css) and scripting in [app.v5.js](file:///D:/Project/md-converter/frontend/app.v5.js).
+*   Modify layout code in [style.v3.css](file:///D:/Project/md-converter/frontend/style.v3.css) and scripting in [app.v5.js](file:///D:/Project/md-converter/frontend/app.v5.js).
 *   Maintain the cache-busting filename structure (`style.vN.css` and `app.vN.js`) in [index.html](file:///D:/Project/md-converter/frontend/index.html) loader tags:
     ```html
-    <link rel="stylesheet" href="style.v2.css" />
+    <link rel="stylesheet" href="style.v3.css" />
     <script src="app.v5.js"></script>
     ```
 

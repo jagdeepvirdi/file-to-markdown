@@ -161,7 +161,7 @@ md-converter/
 │   └── test_converter.py   # Unit tests for convert_bytes, OCR, and transcription pipelines
 └── frontend/
     ├── index.html          # HTML structure for the Single Page Application
-    ├── style.v2.css        # Layout grid, responsive queries, and dark-theme CSS
+    ├── style.v3.css        # Layout grid, responsive queries, and dark-theme CSS
     ├── app.v5.js           # Drag/drop, native file selection, API calls, log history
     └── marked.umd.js       # marked v18 UMD build (bundled locally, no CDN)
 ```
@@ -206,7 +206,7 @@ Drop an `icon.ico` (Windows) or `icon.icns` (macOS) next to `build.py` before bu
 - **No server, no AI.** MarkItDown is deterministic format-conversion code (parsers + rule-based extraction), not a language model. `enable_plugins=False` is passed so third-party plugins can't load. No `llm_client` is ever attached, so the optional AI image-captioning and Bing-search converters in upstream MarkItDown are never reachable here.
 - **Offline media via `media_handlers.py`.** Images, audio, and video bypass MarkItDown entirely and go through a custom offline pipeline: Tesseract for OCR, FFmpeg + OpenAI Whisper for transcription. If either binary is absent, the handler returns a markdown-formatted install guide rather than raising an error, so the output panel always shows something useful.
 - **Bytes over paths.** The frontend reads dropped/picked files as bytes in JS and ships them across the bridge as base64. This means drag-and-drop "just works" without relying on pywebview's more fragile native file-path APIs.
-- **Cache busting.** WebView2 caches aggressively. CSS/JS files use versioned names (`style.v2.css`, `app.v5.js`). Bump the version suffix when making breaking frontend changes.
+- **Cache busting.** WebView2 caches aggressively. CSS/JS files use versioned names (`style.v3.css`, `app.v5.js`). Bump the version suffix when making breaking frontend changes.
 
 ## License
 
