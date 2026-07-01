@@ -94,7 +94,7 @@ WebView2 caches aggressively. When updating styles or scripts, use versioned fil
 
 ## Key Constraints
 
-- No network calls — `enable_plugins=False` on MarkItDown, no `llm_client` attached, image OCR (Tesseract) and audio/video transcription (PocketSphinx) run entirely offline locally
+- No network calls — `enable_plugins=False` on MarkItDown, no `llm_client` attached, image OCR (Tesseract) and audio/video transcription (OpenAI Whisper) run entirely offline locally
 - External system binaries: Requires Tesseract OCR and FFmpeg installed on the machine and available in the system PATH (graceful fallback instructions are returned if missing)
 - Max file size: 1000 MB (set in `converter.py`; files <= 80 MB can be dropped/base64-encoded, while files > 80 MB up to 1000 MB must be browsed and loaded via native file path bridge to avoid memory crashes)
 - Error log written to `~/.md-converter/error.log` for diagnosing packaged-build crashes
